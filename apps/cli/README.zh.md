@@ -8,12 +8,13 @@
 
 | 命令 | 用途 |
 |---|---|
+| `dsh` 或 `dsh cli` | 开启交互式终端会话。 |
 | `dsh --profile <name>` | 启动位于 `$DSH_HOME/profiles/<name>` 的指定 profile。 |
 | `dsh --profile headless "job"` | 运行一个全新的持久化会话，打印最终答案并退出。 |
 | `dsh web` | `--profile web` 的别名。 |
 | `dsh plugin --profile <name> <pnpm args>` | 通过在 profile 目录中转发给 pnpm 来管理该 profile 的插件。 |
 
-运行命令时所在的目录将作为默认 workspace 根目录。`web` 和 `headless` profile 在首次使用时会从随附模板自动初始化；其他任何 profile 都必须通过 `dsh plugin` 创建。
+运行命令时所在的目录是工作区选择的默认位置。`web` 和 `headless` profile 从随附模板自动初始化。使用 `dsh plugin` 管理自定义 profile。
 
 ## 应用参数
 
@@ -45,3 +46,5 @@ profile 目录包含一个 `package.json`，其中记录树外插件依赖，以
 ## 开发
 
 生产运行需要已构建的包与前端产物。请在仓库根目录单独运行 `pnpm run build`，然后使用 `pnpm dsh <args...>` 运行 TypeScript 入口并转发所有参数；模块解析约定以[源码执行参考](reference/README.md#source-execution)为准。
+
+终端 Host 使用独立安装的官方 DSH 预发行版。请在仓库根目录使用 Node 24.9 或更高版本，运行 `pnpm --dir apps/cli/runtime install --frozen-lockfile`。Windows 项目路径较长时，可以将同一运行时安装在较短的路径，并用 `DS_CLI_RUNTIME_DIR` 指向该安装目录。Host 的数据保存在配置的 DSH home 下的 `ds-cli-host-0.2` 目录。

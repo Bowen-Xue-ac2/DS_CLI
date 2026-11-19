@@ -12,6 +12,7 @@ import { isCancelKey, isExitKey } from './keys.ts'
 import { ScrollRegion } from './scroll-region.tsx'
 import { ModeBadge, PermissionBadge, SessionStats, StatusBar } from './status-bar.tsx'
 import { CliTextInput } from './text-input.tsx'
+import { StartMenu, type CliMenu, type CliMenuResult } from './start-menu.tsx'
 
 /** The props the io wires from the driver's view store and interaction hooks. */
 export interface CliAppProps {
@@ -29,13 +30,17 @@ export interface CliAppProps {
   onHistoryDown?(this: void, current: string): string | undefined
   /** Shift+Tab cycles the permission preset. */
   onCyclePermission?(this: void): void
+  /** An active menu temporarily owns the keyboard, while the draft stays mounted here. */
+  menu?: { readonly id: number; readonly content: CliMenu; finish(result: CliMenuResult): void }
 }
 
 /** The assembled terminal UI. */
-export function CliApp({ store, onSubmit, onCtrlC, onExit, onHistoryUp, onHistoryDown, onCyclePermission }: CliAppProps) {
+export function CliApp({ store, onSubmit, onCtrlC, onExit, onHistoryUp, onHistoryDown, onCyclePermission, menu }: CliAppProps) {
   const view = useCliView(store)
   const [input, setInput] = React.useState('')
   useInput((inputChar, key) => {
+    // Keep Ink's raw input active while the prompt hands the keyboard to a menu.
+    if (menu !== undefined) return
     // Shift+Tab cycles the permission preset.
     if (key.shift && key.tab) {
       onCyclePermission?.()
@@ -50,8 +55,13 @@ export function CliApp({ store, onSubmit, onCtrlC, onExit, onHistoryUp, onHistor
       onExit()
     }
   })
+  if (menu !== undefined) return <StartMenu key={menu.id} menu={menu.content} onClose={menu.finish} />
+  if (view.inputLocked === true && view.sessionId === '') return <InkText>Connecting to DSH Host…</InkText>
   return (
     <Box flexDirection="column">
+      {view.project === undefined ? null : (
+        <InkText>Workspace {view.project} · Directory {view.cwd}</InkText>
+      )}
       <ScrollRegion view={view} />
       <Box flexShrink={0} flexDirection="row">
         <Box flexGrow={1}>
@@ -75,6 +85,7 @@ export function CliApp({ store, onSubmit, onCtrlC, onExit, onHistoryUp, onHistor
             value={input}
             onChange={setInput}
             onSubmit={(line) => { onSubmit(line); setInput('') }}
+            focus={view.inputLocked !== true}
             {...(onHistoryUp === undefined ? {} : { onHistoryUp })}
             {...(onHistoryDown === undefined ? {} : { onHistoryDown })}
           />

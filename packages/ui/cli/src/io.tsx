@@ -6,12 +6,15 @@
 
 import * as React from 'react'
 import { render } from 'ink'
-import { CliApp } from './app.tsx'
+import { CliApp, type CliAppProps } from './app.tsx'
 import type { CliViewStoreLike } from './hooks/use-cli-view.ts'
+import type { CliMenu, CliMenuResult } from './start-menu.tsx'
 
 /** The io contract the driver consumes: read a line, then dispose. */
 export interface InteractiveIo {
   nextLine(): Promise<string | null>
+  /** @param menu - temporary keyboard choices. @param signal - caller lifetime. @returns values or cancellation. */
+  choose(menu: CliMenu, signal?: AbortSignal): Promise<CliMenuResult>
   dispose(): void
 }
 
@@ -85,17 +88,23 @@ export function createInteractiveIo(options: InteractiveIoOptions): InteractiveI
     // synchronous work here, and a plain write is exactly that.
     process.on('exit', restoreTerminal)
   }
-  const instance = render(
-    <CliApp
-      store={options.view}
-      onSubmit={resolveNext}
-      onCtrlC={options.onCancel}
-      onExit={() => { options.onExit(); resolveNext(null) }}
-      {...(options.onHistoryUp === undefined ? {} : { onHistoryUp: options.onHistoryUp })}
-      {...(options.onHistoryDown === undefined ? {} : { onHistoryDown: options.onHistoryDown })}
-      {...(options.onCyclePermission === undefined ? {} : { onCyclePermission: options.onCyclePermission })}
-    />,
-  )
+  let activeMenu: CliAppProps['menu']
+  let menuId = 0
+  function element() {
+    return (
+      <CliApp
+        store={options.view}
+        onSubmit={resolveNext}
+        onCtrlC={options.onCancel}
+        onExit={() => { options.onExit(); resolveNext(null) }}
+        {...(options.onHistoryUp === undefined ? {} : { onHistoryUp: options.onHistoryUp })}
+        {...(options.onHistoryDown === undefined ? {} : { onHistoryDown: options.onHistoryDown })}
+        {...(options.onCyclePermission === undefined ? {} : { onCyclePermission: options.onCyclePermission })}
+        {...(activeMenu === undefined ? {} : { menu: activeMenu })}
+      />
+    )
+  }
+  const instance = render(element(), { exitOnCtrlC: false })
   // ink arms raw mode when the input hook mounts; re-arm explicitly so the
   // first keypress after a watch-restart is parsed as a key, not a raw escape
   // sequence (otherwise an early Up becomes the literal "^[[A").
@@ -110,8 +119,32 @@ export function createInteractiveIo(options: InteractiveIoOptions): InteractiveI
       if (buffered !== undefined) return Promise.resolve(buffered)
       return new Promise<string | null>((resolve) => { pending = resolve })
     },
+    choose: (content, signal) => {
+      if (disposed || signal?.aborted) return Promise.resolve({ kind: 'cancel' })
+      if (activeMenu !== undefined) return Promise.reject(new Error('A terminal selection is already open'))
+      return new Promise<CliMenuResult>((resolve) => {
+        const abort = (): void => { activeMenu?.finish({ kind: 'cancel' }) }
+        activeMenu = {
+          id: ++menuId,
+          content,
+          finish: (result) => {
+            signal?.removeEventListener('abort', abort)
+            activeMenu = undefined
+            if (!disposed) instance.rerender(element())
+            resolve(result)
+          },
+        }
+        signal?.addEventListener('abort', abort, { once: true })
+        // Ink's full-height chat can leave the previous short menu cached.
+        instance.clear()
+        instance.rerender(element())
+      })
+    },
     dispose: () => {
+      if (disposed) return
       disposed = true
+      activeMenu?.finish({ kind: 'cancel' })
+      resolveNext(null)
       instance.unmount()
       restoreTerminal()
       if (process.stdout.isTTY) process.off('exit', restoreTerminal)

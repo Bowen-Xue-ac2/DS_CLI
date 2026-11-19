@@ -28,6 +28,21 @@ const invocation = parseDshArgs(process.argv.slice(2), readVersion())
 
 switch (invocation.mode) {
   case 'profile': {
+    if (invocation.profile === 'cli') {
+      const optionNames = invocation.args.map(argument => argument.split('=', 1)[0])
+      const legacy = optionNames.some(option => option === '--no-interactive' || option === '--model' || option === '--provider')
+      const tty = process.stdin.isTTY && process.stdout.isTTY
+      if (!legacy && (tty || optionNames.includes('--choose') || optionNames.includes('--help') || optionNames.includes('-h'))) {
+        const { runTerminal } = await import('./terminal-run.ts')
+        try {
+          await runTerminal(invocation.args, invocation.patches, process.cwd())
+        } catch (error) {
+          console.error(`dsh: ${error instanceof Error ? error.message : String(error)}`)
+          process.exitCode = 1
+        }
+        break
+      }
+    }
     const { runProfile } = await import('./profile-boot.ts')
     await runProfile({
       environment: loadLayeredEnv('dsh'),

@@ -48,5 +48,11 @@ export interface CliViewState {
   /** The active permission preset, e.g. `workspace-write`. */
   readonly permission: string
   /** The active agent preset, e.g. `standard`; absent when no roster composed one. */
-  readonly mode?: string
+  readonly mode?: string | undefined
+  /** Registered project shown for a Host session. */
+  readonly project?: string
+  /** Host-reported working directory used by new tool calls. */
+  readonly cwd?: string
+  /** Hold prompt submission until Host session setup has completed. */
+  readonly inputLocked?: boolean
 }

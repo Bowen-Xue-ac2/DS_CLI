@@ -1,0 +1,11 @@
+- id: directory-picker
+  disabled: true
+# The terminal has no workspace diff view. The web recorder can hold the first
+# tool behind a Git snapshot while the rest of the Host is ready.
+- id: workspace-changes
+  disabled: true
+- insert:
+    - id: terminal-directory-picker
+      name: '@deepseek-ai/dsh-host-directory-picker-browse'
+    - id: ds-cli-cwd
+      name: ../lib/terminal-cwd.js

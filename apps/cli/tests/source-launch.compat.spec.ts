@@ -24,8 +24,8 @@ describe('dsh SOURCE launcher (node --import tsx/esm)', () => {
     expect(rootPackage.scripts?.dsh).toBe('node --import tsx/esm apps/cli/src/bin.ts')
   })
 
-  it('boots the source entry and requires a profile', async () => {
-    const result = await execa(process.execPath, ['--import', 'tsx/esm', dshSourceBin], {
+  it('boots the source entry and rejects an unrecognized option', async () => {
+    const result = await execa(process.execPath, ['--import', 'tsx/esm', dshSourceBin, '--bogus'], {
       cwd: repoRoot,
       input: '',
       timeout: 25_000,

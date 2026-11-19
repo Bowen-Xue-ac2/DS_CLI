@@ -21,6 +21,19 @@ function exitCode(argv: string[]): number {
 afterEach(() => { vi.restoreAllMocks() })
 
 describe('parseDshArgs', () => {
+  it.each([
+    [[], []],
+    [['--choose'], ['--choose']],
+    [['--cwd', '项目 A/src'], ['--cwd', '项目 A/src']],
+    [['--permission=read-only'], ['--permission=read-only']],
+    [['--resume', 'old-session'], ['--resume', 'old-session']],
+  ])('routes %j to the same CLI profile as the explicit aliases', (argv, args) => {
+    const invocation = { mode: 'profile', profile: 'cli', patches: [], args }
+    expect(parse(argv)).toEqual(invocation)
+    expect(parse(['cli', ...argv])).toEqual(invocation)
+    expect(parse(['--profile', 'cli', ...argv])).toEqual(invocation)
+  })
+
   it('routes profile boots and the web/cli aliases, handing the rest to the app', () => {
     expect(parse(['--profile', 'tui'])).toEqual({ mode: 'profile', profile: 'tui', patches: [], args: [] })
     expect(parse(['--profile', 'tui', '--patch', 'a.yml', '--patch', 'b.yml']))
@@ -74,7 +87,6 @@ describe('parseDshArgs', () => {
   })
 
   it('rejects missing profile, removed flags, and contradictory inputs', () => {
-    expect(exitCode([])).toBe(1)
     expect(exitCode(['tui'])).toBe(1) // an app argument without --profile has no app to reach
     expect(exitCode(['--config', 'c.yml'])).toBe(1) // removed
     expect(exitCode(['-p', 'task'])).toBe(1) // removed
@@ -105,5 +117,6 @@ describe('parseDshArgs', () => {
     expect(exitCode(['--help'])).toBe(0)
     expect(exitCode(['-h'])).toBe(0)
     expect(exitCode(['--version'])).toBe(0)
+    expect(exitCode(['-V'])).toBe(0)
   })
 })

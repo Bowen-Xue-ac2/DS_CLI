@@ -60,9 +60,15 @@ interface BootOptions {
  */
 const collect = (value: string, previous: string[] = []): string[] => [...previous, value]
 
+const CLI_START_OPTIONS = new Set([
+  '--choose', '--cwd', '--mode', '-m', '--permission', '--resume', '--no-interactive',
+  '--model', '--provider', '--verbose',
+])
+
 /** The launcher's own help text; each app prints its own. */
 const HELP_EXAMPLES = `
 Examples:
+  dsh                                        start an interactive terminal session
   dsh --profile web                          boot the web profile (same as: dsh web)
   dsh --profile headless "run the tests"     answer one task, print the result, and exit
   dsh --profile cli                          start an interactive terminal session (same as: dsh cli)
@@ -136,6 +142,12 @@ export function parseDshArgs(argv: readonly string[], version: string): DshInvoc
       // With the app owning -h, the launcher's own help is what a bare
       // `dsh -h` (no profile to hand it to) must print.
       if (options.profile === undefined) {
+        const firstOption = args[0]?.split('=', 1)[0]
+        const isCli = firstOption === undefined || CLI_START_OPTIONS.has(firstOption)
+        if (isCli && options.patch === undefined && !options.dumpConfig && !options.dumpDefaultConfig) {
+          resolved = resolveBoot(program, 'cli', options, args)
+          return
+        }
         if (args.some(argument => argument === '-h' || argument === '--help')) program.help()
         program.error('error: --profile <name> is required')
       }

@@ -1,0 +1,15 @@
+# Separate installation so prerelease Host peers never resolve from the fork.
+packages: []
+
+allowBuilds:
+  '@deepseek-ai/dsh-subprocess-local@0.2.2-rc.5': true
+  node-pty: true
+  koffi: true
+  protobufjs: false
+  '@google/genai': false
+  node-addon-require-builtin: false
+
+minimumReleaseAgeExclude:
+  # This isolated lock pins the modules of the official prerelease together.
+  - '@deepseek-ai/dsh@0.2.2-rc.5'
+  - '@deepseek-ai/dsh-*'

@@ -16,7 +16,10 @@
   },
   "files": [
     "lib/*.js",
-    "config"
+    "config",
+    "runtime/package.json",
+    "runtime/pnpm-workspace.yaml",
+    "runtime/pnpm-lock.yaml"
   ],
   "license": "MIT",
   "dependencies": {
@@ -40,6 +43,7 @@
     "@deepseek-ai/dsh-launch-environment": "workspace:^",
     "@deepseek-ai/dsh-fs-local": "workspace:^",
     "@deepseek-ai/dsh-cli": "workspace:^",
+    "@deepseek-ai/dsh-cli-ui": "workspace:^",
     "@deepseek-ai/dsh-headless": "workspace:^",
     "@deepseek-ai/dsh-mcp-client": "workspace:^",
     "@deepseek-ai/dsh-home-paths": "workspace:^",

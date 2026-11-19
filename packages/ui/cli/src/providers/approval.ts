@@ -1,8 +1,6 @@
 /**
- * The terminal-side approval answerer: renders each ask as a view notice and
- * grants the action once so the interactive session stays usable. The grant is
- * visible in the transcript; the sandbox and permission presets still bound
- * what the tool may touch.
+ * Approval notices for compatibility profiles. The Host terminal owns the
+ * interactive approval menu. Other profiles delegate to their own answerers.
  * @module @deepseek-ai/dsh-cli-ui/providers
  */
 
@@ -22,10 +20,10 @@ interface NoticeView {
  * @returns a disposer removing the listener.
  */
 export function installCliApproval(ctx: Context, view: NoticeView): () => void {
-  return ctx.on('approval/request', (request: ApprovalRequest) => {
+  return ctx.on('approval/request', (request: ApprovalRequest, next) => {
     view.notice(
-      `[approval] ${request.toolName}${request.reason !== undefined ? `: ${request.reason}` : ''} — granted once`,
+      `[approval] ${request.toolName}${request.reason !== undefined ? `: ${request.reason}` : ''} — approval required`,
     )
-    return Promise.resolve('allowed-once' satisfies ApprovalOutcome)
+    return next() as Promise<ApprovalOutcome>
   })
 }

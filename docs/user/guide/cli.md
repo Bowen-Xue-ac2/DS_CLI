@@ -2,9 +2,33 @@
 
 English | [中文](cli.zh.md)
 
-`dsh cli` starts an interactive terminal session like a coding agent in your shell: a bottom input bar over a scrolling transcript, streaming model output, and tool cards. It resumes the latest session for the current working directory by default, so reopening continues where you left off.
+`dsh` opens a new session on the official Host. In a registered workspace it opens chat immediately. Elsewhere a terminal menu preselects the current directory and default Agent. A session opened in a registered project's subdirectory belongs to the project and runs new tools from that subdirectory.
 
 ## Start
+
+From the fork's root, use Node 24.9 or newer, run `pnpm --dir apps/cli/runtime install --frozen-lockfile`, and build with `pnpm run build:lib`.
+
+For the current PowerShell session, define the command before changing directories.
+
+```powershell
+$dsCliBin = (Resolve-Path ./apps/cli/lib/bin.js).Path
+function dsh { node $dsCliBin @args }
+Set-Location -LiteralPath 'C:/work/my-project'
+dsh
+```
+
+For the current Bash session, define the same command from the fork root.
+
+```bash
+ds_cli_bin="$PWD/apps/cli/lib/bin.js"
+dsh() {
+  node "$ds_cli_bin" "$@"
+}
+cd -- /path/to/my-project
+dsh
+```
+
+Use `dsh --choose` to reopen the selector. Tab changes fields, the arrow keys select an option, Enter confirms, and Esc cancels. To use an existing local shim directory in the current shell, prepend it to `$env:Path` in PowerShell or `PATH` in Bash.
 
 ```sh
 dsh cli
@@ -24,23 +48,32 @@ dsh cli --resume session-xxxx
 
 ## Send messages and use slash commands
 
-Type a message and press **Enter** to send it to the agent. Stream output appears above the input bar. Built-in slash commands:
+Type a message and press **Enter** to send it to the Agent. Messages and tool status appear above the input bar.
 
 | Command | Effect |
 | --- | --- |
-| `/exit` | End the session and exit |
+| `/exit` | Exit the CLI |
 | `/help` | Show help |
-| `/clear` | Clear the transcript |
-| `/session` | List saved sessions |
-| `/session <id>` | Switch to a saved session |
+| `/clear` | Clear the visible transcript |
+| `/workspace` | Select a workspace or browse directories |
+| `/cd [path]` | Change the active working directory within the session |
+| `/agent` or `/mode` | Choose the primary Agent before sending a message |
 | `/model <model>` | Switch the model for this session |
-| `/permission <ask\|never>` | Toggle the approval prompting stance |
+| `/permission` or **Shift+Tab** | Choose a current preset or a default for future sessions |
+
+The approval menu offers **Deny** and **Allow once** for the requesting tool. Full access requires an explicit confirmation.
 
 **Ctrl+C** cancels the in-flight turn while the agent runs, and exits at the prompt.
 
-## Use a custom model provider
+## Configure the interactive Host
 
-`dsh cli` runs any OpenAI-compatible endpoint. Point the built-in DeepSeek adapter at a company gateway or self-hosted server through `$DSH_HOME/settings.yaml` (the same file the Web UI writes). No code changes or extra plugins are needed.
+The interactive Host reads settings and stores workspaces and sessions under `$DSH_HOME/ds-cli-host-0.2`. It can also read API keys from the environment inherited from the invoking shell. A named `--resume` restores a session from this Host.
+
+<a id="use-a-custom-model-provider"></a>
+
+## Configure the legacy CLI
+
+`dsh cli --no-interactive` and invocations with `--model` or `--provider` use the legacy profile. To configure its OpenAI-compatible DeepSeek adapter, use `$DSH_HOME/settings.yaml`.
 
 ```yaml
 # $DSH_HOME/settings.yaml

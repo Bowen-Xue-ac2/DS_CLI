@@ -11,4 +11,5 @@
 export type { CliViewItem, CliViewState } from './types.ts'
 export { createInteractiveIo } from './io.tsx'
 export type { InteractiveIo, InteractiveIoOptions } from './io.tsx'
+export type { CliMenu, CliMenuResult, CliMenuOption } from './start-menu.tsx'
 export { installCliApproval } from './providers/approval.ts'

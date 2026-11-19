@@ -156,6 +156,9 @@ importers:
       '@deepseek-ai/dsh-cli':
         specifier: workspace:^
         version: link:../../packages/bundle/cli
+      '@deepseek-ai/dsh-cli-ui':
+        specifier: workspace:^
+        version: link:../../packages/ui/cli
       '@deepseek-ai/dsh-client-ui-agent-preset':
         specifier: workspace:^
         version: link:../../packages/client/ui-agent-preset

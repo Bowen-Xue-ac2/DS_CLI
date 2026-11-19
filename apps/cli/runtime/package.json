@@ -1,0 +1,11 @@
+{
+  "name": "ds-cli-runtime-installation",
+  "private": true,
+  "packageManager": "pnpm@11.7.0",
+  "engines": {
+    "node": ">=24.9.0"
+  },
+  "dependencies": {
+    "ds-cli-runtime": "npm:@deepseek-ai/dsh@0.2.2-rc.5"
+  }
+}

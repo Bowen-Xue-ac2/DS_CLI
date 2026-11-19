@@ -8,12 +8,13 @@ The `dsh` command is the product launcher for profiles: ordered stacks of plugin
 
 | Command | Purpose |
 |---|---|
+| `dsh` or `dsh cli` | Start an interactive terminal session. |
 | `dsh --profile <name>` | Boot the named profile under `$DSH_HOME/profiles/<name>`. |
 | `dsh --profile headless "job"` | Run one fresh persisted session, print the final answer, and exit. |
 | `dsh web` | Alias of `--profile web`. |
 | `dsh plugin --profile <name> <pnpm args>` | Manage a profile's plugins by forwarding to pnpm in the profile directory. |
 
-The invoking directory is the default workspace root. The `web` and `headless` profiles auto-initialize on first use from shipped templates; any other profile must be created through `dsh plugin`.
+The invoking directory is the default for workspace selection. The `web` and `headless` profiles auto-initialize from shipped templates. Manage custom profiles through `dsh plugin`.
 
 ## App arguments
 
@@ -45,3 +46,5 @@ The [CLI behavior reference](reference/README.md) owns exact layer precedence, f
 ## Development
 
 Production runs require built package and frontend artifacts. From the repository root, run `pnpm run build` separately, then use `pnpm dsh <args...>` to run the TypeScript entry and forward every argument; the [source-execution reference](reference/README.md#source-execution) owns the module-resolution contract.
+
+The terminal Host adapter uses a dedicated installation of the official DSH prerelease. With Node 24.9 or newer, run `pnpm --dir apps/cli/runtime install --frozen-lockfile` from the repository root. For a checkout with a long Windows path, install the same runtime directory at a short path and set `DS_CLI_RUNTIME_DIR` to that installation. The Host stores its data under `ds-cli-host-0.2` inside the configured DSH home.
