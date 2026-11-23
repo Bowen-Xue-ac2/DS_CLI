@@ -3,16 +3,20 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { stripVTControlCharacters } from 'node:util'
 import { startMockLlmServer } from '@deepseek-ai/dsh-llm-mock-server'
 import { execa } from 'execa'
 import { expect, it, vi } from 'vitest'
 import { terminalFixtureEnv } from './terminal-fixture.ts'
 
-const terminalHost = new URL('../lib/terminal-host.js', import.meta.url).href
-const terminalBin = fileURLToPath(new URL('../lib/bin.js', import.meta.url))
-const fromRuntime = createRequire(new URL('../runtime/package.json', import.meta.url))
+const consumer = process.env.DS_CLI_TEST_INSTALL_DIR
+const appRoot = consumer === undefined
+  ? new URL('../', import.meta.url)
+  : pathToFileURL(join(consumer, 'node_modules', '@deepseek-ai', 'dsh') + '/')
+const terminalHost = new URL('lib/terminal-host.js', appRoot).href
+const terminalBin = fileURLToPath(new URL('lib/bin.js', appRoot))
+const fromRuntime = createRequire(new URL('runtime/package.json', appRoot))
 const fromCli = createRequire(fromRuntime.resolve('ds-cli-runtime/package.json'))
 const fromBase = createRequire(fromCli.resolve('@deepseek-ai/dsh-base/package.json'))
 const requirePty = createRequire(fromBase.resolve('@deepseek-ai/dsh-subprocess-local/package.json'))
@@ -77,10 +81,12 @@ function launch(shell: 'pwsh.exe' | 'bash.exe', cwd: string, vars: Record<string
 }
 
 async function shellEnvironment(root: string, env: Record<string, string>): Promise<Record<string, string>> {
-  const bin = join(root, 'shim')
-  await mkdir(bin)
-  await writeFile(join(bin, 'dsh.ps1'), '& $env:DS_CLI_TEST_NODE $env:DS_CLI_TEST_BIN @args\nexit $LASTEXITCODE\n')
-  await writeFile(join(bin, 'dsh'), '#!/usr/bin/env bash\nexec "$DS_CLI_TEST_NODE" "$DS_CLI_TEST_BIN" "$@"\n', { mode: 0o755 })
+  const bin = consumer === undefined ? join(root, 'shim') : join(consumer, 'node_modules', '.bin')
+  if (consumer === undefined) {
+    await mkdir(bin)
+    await writeFile(join(bin, 'dsh.ps1'), '& $env:DS_CLI_TEST_NODE $env:DS_CLI_TEST_BIN @args\nexit $LASTEXITCODE\n')
+    await writeFile(join(bin, 'dsh'), '#!/usr/bin/env bash\nexec "$DS_CLI_TEST_NODE" "$DS_CLI_TEST_BIN" "$@"\n', { mode: 0o755 })
+  }
   const parentEnv = Object.fromEntries(
     Object.entries(process.env).filter((entry): entry is [string, string] => entry[0].toLowerCase() !== 'path' && entry[1] !== undefined),
   )
@@ -150,7 +156,8 @@ it.runIf(process.platform === 'win32').each(['pwsh.exe', 'bash.exe'] as const)(
       await known.until(sub)
       await known.until('read-only on')
       expect(known.output()).not.toContain('Choose workspace and Agent')
-      expect(known.output().replaceAll('\\', '/')).toMatch(/\/shim\/dsh(?:\.ps1)?/u)
+      const entry = consumer === undefined ? '/shim/dsh' : '/node_modules/.bin/dsh'
+      expect(known.output().replaceAll('\\', '/')).toContain(entry)
       known.send('Read the local sentinel.\r')
       await known.until('SHELL_VERIFIED')
       expect(latestToolOutput()).toContain(sentinel)

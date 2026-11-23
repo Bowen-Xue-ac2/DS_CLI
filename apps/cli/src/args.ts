@@ -45,13 +45,14 @@ interface PluginInvocation {
 }
 
 /** The resolved `dsh` invocation. Help, version, and errors exit inside {@link parseDshArgs}. */
-export type DshInvocation = ProfileInvocation | DumpConfigInvocation | PluginInvocation
+export type DshInvocation = ProfileInvocation | DumpConfigInvocation | PluginInvocation | { mode: 'build-info' }
 
 /** Launcher flags shared by the default command and the `web` alias. */
 interface BootOptions {
   patch?: string[]
   dumpConfig?: boolean
   dumpDefaultConfig?: boolean
+  buildInfo?: boolean
 }
 
 /**
@@ -138,7 +139,16 @@ export function parseDshArgs(argv: readonly string[], version: string): DshInvoc
     .option('--patch <path>', 'extra patch-list overlay applied after the profile layer (repeatable)', collect)
     .option('--dump-config', 'print the composed profile tree and exit')
     .option('--dump-default-config', 'print the profile tree without its user layer or --patch overlays and exit')
+    .option('--build-info', 'print the CLI build and installed Host versions and exit')
     .action((args: string[], options: BootOptions & { profile?: string }) => {
+      if (options.buildInfo) {
+        if (args.length > 0 || options.profile !== undefined || options.patch !== undefined
+          || options.dumpConfig || options.dumpDefaultConfig) {
+          program.error('error: --build-info must be used by itself')
+        }
+        resolved = { mode: 'build-info' }
+        return
+      }
       // With the app owning -h, the launcher's own help is what a bare
       // `dsh -h` (no profile to hand it to) must print.
       if (options.profile === undefined) {
@@ -159,6 +169,9 @@ export function parseDshArgs(argv: readonly string[], version: string): DshInvoc
   /** Reject parent options supplied before a subcommand. */
   const rejectParentOptions = (command: string): void => {
     const parent = program.opts<BootOptions & { profile?: string }>()
+    if (parent.buildInfo !== undefined) {
+      program.error('error: --build-info must be used by itself')
+    }
     if (parent.profile !== undefined || parent.patch !== undefined
       || parent.dumpConfig !== undefined || parent.dumpDefaultConfig !== undefined) {
       program.error(`error: ${command} takes none of parent --profile, --patch, --dump-config, or --dump-default-config`)

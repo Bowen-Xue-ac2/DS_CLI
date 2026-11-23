@@ -1,4 +1,17 @@
+import { execFileSync } from 'node:child_process'
 import { defineConfig } from 'tsdown'
+
+function buildRevision(): string | null {
+  try {
+    return execFileSync('git', ['rev-parse', '--short=12', 'HEAD'], {
+      cwd: import.meta.dirname,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim()
+  } catch {
+    return null
+  }
+}
 
 /**
  * The dsh CLI ships the `bin` entry and the terminal Host adapter.
@@ -12,6 +25,7 @@ export default defineConfig({
   format: ['esm'],
   platform: 'node',
   target: 'es2024',
+  define: { __DS_CLI_BUILD_REVISION__: JSON.stringify(buildRevision()) },
   fixedExtension: false,
   dts: false,
   clean: false,

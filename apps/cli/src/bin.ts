@@ -13,6 +13,8 @@ import { fileURLToPath } from 'node:url'
 import { loadLayeredEnv } from '@deepseek-ai/dsh-app-boot'
 import { parseDshArgs } from './args.ts'
 
+declare const __DS_CLI_BUILD_REVISION__: string | null
+
 // Both the source tree (apps/cli/src) and the bundled bin (apps/cli/lib) sit
 // one directory under apps/cli, so the checked-in manifest resolves with the
 // same relative hop from either artifact.
@@ -24,15 +26,15 @@ function readVersion(): string {
   return typeof manifest.version === 'string' ? manifest.version : '0.0.0'
 }
 
-const invocation = parseDshArgs(process.argv.slice(2), readVersion())
+const version = readVersion()
+const invocation = parseDshArgs(process.argv.slice(2), version)
 
 switch (invocation.mode) {
   case 'profile': {
     if (invocation.profile === 'cli') {
       const optionNames = invocation.args.map(argument => argument.split('=', 1)[0])
       const legacy = optionNames.some(option => option === '--no-interactive' || option === '--model' || option === '--provider')
-      const tty = process.stdin.isTTY && process.stdout.isTTY
-      if (!legacy && (tty || optionNames.includes('--choose') || optionNames.includes('--help') || optionNames.includes('-h'))) {
+      if (!legacy) {
         const { runTerminal } = await import('./terminal-run.ts')
         try {
           await runTerminal(invocation.args, invocation.patches, process.cwd())
@@ -60,6 +62,15 @@ switch (invocation.mode) {
   case 'dump-config': {
     const { runDumpConfig } = await import('./dump-config.ts')
     runDumpConfig(invocation.profile, invocation.defaultOnly, invocation.patches)
+    break
+  }
+  case 'build-info': {
+    const { describeTerminalRuntime } = await import('./terminal-host.ts')
+    console.log(JSON.stringify({
+      cli: version,
+      revision: typeof __DS_CLI_BUILD_REVISION__ === 'undefined' ? null : __DS_CLI_BUILD_REVISION__,
+      host: await describeTerminalRuntime(process.env),
+    }))
     break
   }
   default:

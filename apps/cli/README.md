@@ -9,12 +9,15 @@ The `dsh` command is the product launcher for profiles: ordered stacks of plugin
 | Command | Purpose |
 |---|---|
 | `dsh` or `dsh cli` | Start an interactive terminal session. |
+| `dsh --build-info` | Print the CLI version, build revision, and expected and installed Host versions without booting a profile. |
 | `dsh --profile <name>` | Boot the named profile under `$DSH_HOME/profiles/<name>`. |
 | `dsh --profile headless "job"` | Run one fresh persisted session, print the final answer, and exit. |
 | `dsh web` | Alias of `--profile web`. |
 | `dsh plugin --profile <name> <pnpm args>` | Manage a profile's plugins by forwarding to pnpm in the profile directory. |
 
 The invoking directory is the default for workspace selection. The `web` and `headless` profiles auto-initialize from shipped templates. Manage custom profiles through `dsh plugin`.
+
+Interactive sessions require a terminal. Use an explicit automation profile for piped input or output.
 
 ## App arguments
 

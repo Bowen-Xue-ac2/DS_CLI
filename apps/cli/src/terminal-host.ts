@@ -14,7 +14,7 @@ import { resolveDshHome } from '@deepseek-ai/dsh-home-paths'
 import type { TerminalAgentPreset } from './terminal-start.ts'
 
 const RUNTIME_VERSION = '0.2.2-rc.5'
-const STARTUP_TIMEOUT_MS = 30_000
+const STARTUP_TIMEOUT_MS = 60_000
 
 /** Selected fields from the official Host's workspace projection. */
 export interface TerminalWorkspace {
@@ -265,6 +265,20 @@ async function runtimeManifest(callerEnv: NodeJS.ProcessEnv): Promise<string> {
   }
 }
 
+/**
+ * Inspect the pinned runtime without creating or loading a Host profile.
+ * @param env - caller environment supplying the optional runtime directory.
+ * @returns the pinned Host version and the installed version, if readable.
+ */
+export async function describeTerminalRuntime(env: NodeJS.ProcessEnv): Promise<{ expected: string; installed: string | null }> {
+  try {
+    const manifest = JSON.parse(await readFile(await runtimeManifest(env), 'utf8')) as { version?: unknown }
+    return { expected: RUNTIME_VERSION, installed: typeof manifest.version === 'string' ? manifest.version : null }
+  } catch {
+    return { expected: RUNTIME_VERSION, installed: null }
+  }
+}
+
 async function ready(generation: ConnectionGeneration, signal: AbortSignal): Promise<void> {
   if (generation.getSnapshot() !== undefined) return
   let unsubscribe = (): void => {}
@@ -306,7 +320,8 @@ export async function openTerminalHost(options: OpenTerminalHostOptions): Promis
   const home = resolve(resolveDshHome(undefined, callerEnv), 'ds-cli-host-0.2')
   const life = new AbortController()
   const signal = AbortSignal.any([options.signal, life.signal])
-  const startup = AbortSignal.any([signal, AbortSignal.timeout(STARTUP_TIMEOUT_MS)])
+  const deadline = AbortSignal.timeout(STARTUP_TIMEOUT_MS)
+  const startup = AbortSignal.any([signal, deadline])
   const ctx = new RuntimeContext()
   signal.throwIfAborted()
   const child = spawn(process.execPath, [
@@ -342,8 +357,10 @@ export async function openTerminalHost(options: OpenTerminalHostOptions): Promis
     return disposal
   }
 
+  let phase: 'starting' | 'connecting to' = 'starting'
   try {
     const url = await startupUrl(child, startup)
+    phase = 'connecting to'
     const cookie = await apiPeerCookie(url, startup)
     await ctx.plugin(typert)
     carrier.installConnection(ctx, {
@@ -410,8 +427,11 @@ export async function openTerminalHost(options: OpenTerminalHostOptions): Promis
       },
     }
   } catch (error) {
+    const failure: unknown = signal.aborted ? signal.reason : deadline.aborted
+      ? new Error(`Timed out ${phase} the DSH Host after ${STARTUP_TIMEOUT_MS / 1_000}s`)
+      : phase === 'connecting to' ? new Error('Could not connect to the DSH Host', { cause: error }) : error
     await dispose()
-    throw error
+    throw failure
   }
 }
 
