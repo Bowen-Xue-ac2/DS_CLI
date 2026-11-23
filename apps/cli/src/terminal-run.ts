@@ -20,6 +20,13 @@ import {
 } from './terminal-start.ts'
 import { permissionCatalog, permissionRevision, setDefaultPermission, setSessionPermission } from './terminal-permissions.ts'
 import { listTerminalSessions, loadTerminalSession } from './terminal-sessions.ts'
+import { terminalCompletions, terminalComposerScope } from './terminal-composer.ts'
+import { resolveTerminalSubmission } from './terminal-commands.ts'
+
+const LOCAL_COMMANDS = new Set([
+  'help', 'commands', 'sessions', 'resume', 'new', 'history', 'fork', 'rename', 'archive', 'unarchive',
+  'pin', 'unpin', 'clear', 'workspace', 'cd', 'agent', 'mode', 'permission', 'exit', 'quit',
+])
 
 const INITIAL_VIEW: CliViewState = {
   items: [], busy: false, sessionId: '', permission: '', inputLocked: true,
@@ -371,8 +378,12 @@ export async function runTerminal(args: readonly string[], patches: readonly str
   let detachApprovals: (() => void) | undefined
   let openPermissions: (() => Promise<void>) | undefined
   const pendingToolTargets = new Map<string, string>()
+  const unacknowledged = new Map<string, { text: string; requestId: string }>()
   const io = createInteractiveIo({
     view,
+    async completion(match, signal) {
+      return host === undefined || current === undefined ? [] : terminalCompletions(host, current, match, signal)
+    },
     onCancel() {
       if (current !== undefined && host !== undefined) {
         void host.remote.session.cancel({ sessionId: current.sessionId })
@@ -523,13 +534,51 @@ export async function runTerminal(args: readonly string[], patches: readonly str
     }
 
     while (current !== undefined && !signal.aborted) {
-      const line = await io.nextLine()
-      if (line === null || line === '/exit' || line === '/quit') break
+      const submission = await io.nextSubmission()
+      if (submission === null) break
       const session: TerminalActiveSession = current
+      const line = submission.text
       const split = /^(\/[^\s]+)(?:\s+(.*))?$/u.exec(line.trim())
       const action = split?.[1]
       const arg = split?.[2]
       try {
+        if (submission.sessionId !== session.sessionId
+          || submission.selections.some(item => item.scope !== terminalComposerScope(session))) {
+          throw new Error('The draft belongs to another terminal context. Pick its references again.')
+        }
+        const selectedSkill = submission.selections.find(item => item.kind === 'skill')
+        const isLocal = action !== undefined && LOCAL_COMMANDS.has(action.slice(1))
+        const isCandidate = selectedSkill !== undefined || (!isLocal && /^\s*[/$][a-z0-9]/u.test(line))
+        const [skills, commands] = isCandidate ? await Promise.all([
+          activeHost.remote.skills.list({ sessionId: session.sessionId }, signal),
+          selectedSkill === undefined && action !== undefined ? remote.commands.list(session.sessionId) : undefined,
+        ]) : [undefined, undefined]
+        const routed = resolveTerminalSubmission({
+          text: line, sessionId: session.sessionId,
+          ...(selectedSkill === undefined ? {} : { skill: { name: selectedSkill.id, sessionId: session.sessionId } }),
+        }, {
+          skills: skills === undefined ? [] : requireHostResult(skills).skills,
+          commands: commands === undefined ? [] : requireHostResult(commands),
+          local: LOCAL_COMMANDS,
+        })
+        if (routed.kind === 'prompt') {
+          const open = unacknowledged.get(session.sessionId)
+          const requestId = open?.text === routed.text ? open.requestId : randomUUID()
+          unacknowledged.set(session.sessionId, { text: routed.text, requestId })
+          const request = {
+            sessionId: session.sessionId, requestId, mode: 'queue' as const,
+            content: [{ type: 'text' as const, text: routed.text }],
+          }
+          requireHostResult(await remote.session.prompt(request, signal))
+          unacknowledged.delete(session.sessionId)
+          continue
+        }
+        if (routed.kind === 'host-command') {
+          const result = requireHostResult(await remote.commands.execute(session.sessionId, routed.text, [], signal))
+          view.notice(result?.result.text ?? `Command /${routed.command.name} is unavailable`)
+          continue
+        }
+        if (action === '/exit' || action === '/quit') break
         switch (action) {
           case '/help':
             view.notice('/sessions [query]  /resume [id]  /new  /workspace  /cd [path]  /history  /fork  /rename  /archive  /unarchive  /pin  /unpin  /agent  /permission  /clear  /exit')
@@ -605,6 +654,11 @@ export async function runTerminal(args: readonly string[], patches: readonly str
           case '/clear':
             view.update({ items: [] })
             break
+          case '/commands': {
+            const commands = requireHostResult(await remote.commands.list(session.sessionId))
+            view.notice(commands.map(command => `/${command.name}  ${command.description ?? ''}`).join('\n'))
+            break
+          }
           case '/workspace': {
             const selection = await chooseStart(io, activeHost, {
               cwd: session.cwd, workspacePath: session.workspace.path,
@@ -670,21 +724,12 @@ export async function runTerminal(args: readonly string[], patches: readonly str
           case '/permission':
             await selectPermissions(arg)
             break
-          case undefined: {
-            const request = {
-              sessionId: session.sessionId, requestId: randomUUID(), mode: 'queue' as const,
-              content: [{ type: 'text' as const, text: line }],
-            }
-            requireHostResult(await remote.session.prompt(request, signal))
-            break
-          }
-          default: {
-            const result = requireHostResult(await remote.commands.execute(session.sessionId, line, [], signal))
-            view.notice(result?.result.text ?? `Unknown command ${action}`)
-          }
         }
       } catch (error) {
-        if (!signal.aborted) view.notice(message(error))
+        if (!signal.aborted) {
+          view.notice(message(error))
+          io.restoreSubmission(submission)
+        }
       }
     }
   } catch (error) {

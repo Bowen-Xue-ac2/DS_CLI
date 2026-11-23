@@ -12,6 +12,7 @@ import { compileFunction } from 'node:vm'
 import type { Context } from '@deepseek-ai/cordis'
 import { resolveDshHome } from '@deepseek-ai/dsh-home-paths'
 import type { TerminalAgentPreset } from './terminal-start.ts'
+import type { TerminalCommandDescriptor, TerminalSkillDescriptor } from './terminal-commands.ts'
 
 const RUNTIME_VERSION = '0.2.2-rc.5'
 const STARTUP_TIMEOUT_MS = 60_000
@@ -152,8 +153,26 @@ export interface ClientRemote {
     cancel(request: { sessionId: string }): Promise<HostResult<unknown>>
   }
   readonly commands: {
+    list(sessionId: string): Promise<HostResult<readonly TerminalCommandDescriptor[]>>
     execute(sessionId: string, line: string, attachments: readonly never[], signal: AbortSignal):
     Promise<HostResult<{ readonly result: { readonly kind: 'success' | 'error'; readonly text?: string } } | null>>
+  }
+  readonly skills: {
+    list(request: { sessionId: string }, signal: AbortSignal):
+    Promise<HostResult<{ readonly skills: readonly TerminalSkillDescriptor[] }>>
+  }
+  readonly fileReferences: {
+    list(sessionId: string, query: string, signal: AbortSignal):
+    Promise<HostResult<readonly { readonly path: string; readonly kind: 'file' | 'directory' }[]>>
+  }
+  readonly sessionReferenceResolver: {
+    candidates(sessionId: string, query: string, signal: AbortSignal):
+    Promise<HostResult<readonly {
+      readonly sessionId: string
+      readonly label: string
+      readonly displayTitle?: string
+      readonly mention: string
+    }[]>>
   }
   readonly permissionPresets: { catalog(): Promise<HostResult<TerminalPermissionCatalog>> }
   readonly settings: {

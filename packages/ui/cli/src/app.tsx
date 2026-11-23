@@ -13,13 +13,21 @@ import { ScrollRegion } from './scroll-region.tsx'
 import { ModeBadge, PermissionBadge, SessionStats, StatusBar } from './status-bar.tsx'
 import { CliTextInput } from './text-input.tsx'
 import { StartMenu, type CliMenu, type CliMenuResult } from './start-menu.tsx'
+import type { CliCompletionItem, CliCompletionSource } from './completion.ts'
+
+/** Submitted text and the claims the user selected in this session. */
+export interface CliSubmission {
+  readonly sessionId: string
+  readonly text: string
+  readonly selections: readonly CliCompletionItem[]
+}
 
 /** The props the io wires from the driver's view store and interaction hooks. */
 export interface CliAppProps {
   /** The driver-owned view store. */
   store: CliViewStoreLike
   /** Submit one input line to the driver. */
-  onSubmit(this: void, line: string): void
+  onSubmit(this: void, line: string, submission: CliSubmission): void
   /** Cancel the in-flight turn (Ctrl+C while busy). */
   onCtrlC(this: void): void
   /** Request a clean exit (Ctrl+C at the prompt, or Ctrl+D). */
@@ -32,19 +40,41 @@ export interface CliAppProps {
   onCyclePermission?(this: void): void
   /** An active menu temporarily owns the keyboard, while the draft stays mounted here. */
   menu?: { readonly id: number; readonly content: CliMenu; finish(result: CliMenuResult): void }
+  /** Optional live completion directories. */
+  completion?: CliCompletionSource
+  /** A failed admission whose draft should be retained if the user has not already edited another. */
+  restore?: CliSubmission
 }
 
 /** The assembled terminal UI. */
-export function CliApp({ store, onSubmit, onCtrlC, onExit, onHistoryUp, onHistoryDown, onCyclePermission, menu }: CliAppProps) {
+export function CliApp({
+  store, onSubmit, onCtrlC, onExit, onHistoryUp, onHistoryDown, onCyclePermission, menu, completion, restore,
+}: CliAppProps) {
   const view = useCliView(store)
-  const [drafts, setDrafts] = React.useState<ReadonlyMap<string, string>>(() => new Map())
-  const input = drafts.get(view.sessionId) ?? ''
+  const [drafts, setDrafts] = React.useState<ReadonlyMap<string, CliSubmission>>(() => new Map())
+  const draft = drafts.get(view.sessionId)
+  const input = draft?.text ?? ''
+  React.useEffect(() => {
+    if (restore === undefined) return
+    setDrafts(previous => previous.has(restore.sessionId) ? previous : new Map(previous).set(restore.sessionId, restore))
+  }, [restore])
   function setInput(value: string): void {
     setDrafts((previous) => {
       const next = new Map(previous)
       if (value === '') next.delete(view.sessionId)
-      else next.set(view.sessionId, value)
+      else next.set(view.sessionId, {
+        sessionId: view.sessionId, text: value,
+        selections: next.get(view.sessionId)?.selections.filter(item => value.includes(item.insert)) ?? [],
+      })
       return next
+    })
+  }
+  function rememberChoice(item: CliCompletionItem): void {
+    setDrafts((previous) => {
+      const current = previous.get(view.sessionId)
+      if (current === undefined) return previous
+      const selections = current.selections.filter(value => value.kind !== item.kind || value.id !== item.id)
+      return new Map(previous).set(view.sessionId, { ...current, selections: [...selections, item] })
     })
   }
   useInput((inputChar, key) => {
@@ -94,8 +124,14 @@ export function CliApp({ store, onSubmit, onCtrlC, onExit, onHistoryUp, onHistor
             key={view.sessionId}
             value={input}
             onChange={setInput}
-            onSubmit={(line) => { onSubmit(line); setInput('') }}
+            onSubmit={(line) => {
+              onSubmit(line, { sessionId: view.sessionId, text: line, selections: draft?.selections ?? [] })
+              setInput('')
+            }}
             focus={view.inputLocked !== true}
+            {...(completion === undefined ? {} : {
+              completion, completionScope: JSON.stringify([view.sessionId, view.cwd, view.mode]), onCompletion: rememberChoice,
+            })}
             {...(onHistoryUp === undefined ? {} : { onHistoryUp })}
             {...(onHistoryDown === undefined ? {} : { onHistoryDown })}
           />

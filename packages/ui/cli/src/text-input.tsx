@@ -14,6 +14,7 @@
 import * as React from 'react'
 import { Box, Text, useInput } from 'ink'
 import { parseMouseWheel } from './scroll-layout.ts'
+import { applyCompletion, findTrigger, type CliCompletionItem, type CliCompletionSource } from './completion.ts'
 
 /** The key descriptor ink passes to `useInput`. */
 export interface CliInputKey {
@@ -123,14 +124,48 @@ export interface CliTextInputProps {
   onHistoryDown?(this: void, current: string): string | undefined
   /** Whether the input is focused (a modal or busy state may blur it). */
   focus?: boolean
+  /** Optional Host-backed choices in this input's current context. */
+  completion?: CliCompletionSource
+  /** Key shared by the visible session, directory and Agent. */
+  completionScope?: string
+  /** Remember the selected identity separately from its editable text. */
+  onCompletion?(this: void, item: CliCompletionItem): void
 }
 
 /**
  * Render a self-managed terminal input with a visible cursor.
  * @param props - value/onChange plus history and submit callbacks.
  */
-export function CliTextInput({ value, onChange, onSubmit, onHistoryUp, onHistoryDown, focus = true }: CliTextInputProps) {
+export function CliTextInput({
+  value, onChange, onSubmit, onHistoryUp, onHistoryDown, focus = true, completion, completionScope, onCompletion,
+}: CliTextInputProps) {
   const [offset, setOffset] = React.useState(value.length)
+  const [menu, setMenu] = React.useState<{
+    key: string
+    items: readonly CliCompletionItem[]
+    error?: string
+  }>()
+  const [selected, setSelected] = React.useState(0)
+  const dismissed = React.useRef<string | undefined>(undefined)
+  const menuKey = JSON.stringify([completionScope, value, offset])
+  const active = focus && menu?.key === menuKey && dismissed.current !== menuKey ? menu : undefined
+  const selectable = active?.items.filter(item => !item.disabled) ?? []
+  const picked = selectable[selected]
+  const first = Math.max(0, (picked === undefined || active === undefined ? 0 : active.items.indexOf(picked)) - 4)
+  React.useEffect(() => {
+    const match = focus && findTrigger(value, offset)
+    if (!match || completion === undefined || dismissed.current === menuKey) return
+    const controller = new AbortController()
+    void completion(match, controller.signal).then((items) => {
+      if (controller.signal.aborted) return
+      setSelected(0)
+      setMenu({ key: menuKey, items })
+    }, (error: unknown) => {
+      if (controller.signal.aborted) return
+      setMenu({ key: menuKey, items: [], error: error instanceof Error ? error.message : String(error) })
+    })
+    return () => controller.abort()
+  }, [completion, focus, menuKey, offset, value])
   // Clamp the cursor when the value shrinks externally (e.g. submit clears the
   // input), but never force it back to the end: the user's own edits drive the
   // offset through applyKeypress and must keep the cursor where they put it.
@@ -145,6 +180,34 @@ export function CliTextInput({ value, onChange, onSubmit, onHistoryUp, onHistory
   React.useEffect(() => { offsetRef.current = offset })
 
   useInput((rawInput, key) => {
+    const liveKey = JSON.stringify([completionScope, valueRef.current, offsetRef.current])
+    if (active !== undefined && liveKey === active.key) {
+      if (key.escape) {
+        dismissed.current = liveKey
+        setMenu(undefined)
+        return
+      }
+      if ((key.upArrow || key.downArrow) && selectable.length > 0) {
+        setSelected(index => (index + (key.upArrow ? selectable.length - 1 : 1)) % selectable.length)
+        return
+      }
+      if ((key.return || (key.tab && !key.shift)) && picked !== undefined) {
+        const match = findTrigger(valueRef.current, offsetRef.current)
+        if (match === undefined) return
+        const suffix = valueRef.current.slice(match.end)
+        const spacer = /^\s/u.test(suffix) ? '' : ' '
+        const next = applyCompletion(valueRef.current, match, picked.insert + spacer)
+        const nextOffset = match.start + picked.insert.length + spacer.length
+        dismissed.current = JSON.stringify([completionScope, next, nextOffset])
+        setMenu(undefined)
+        valueRef.current = next
+        offsetRef.current = nextOffset
+        onChange(next)
+        setOffset(nextOffset)
+        onCompletion?.(picked)
+        return
+      }
+    }
     const edit = applyKeypress(rawInput, key, valueRef.current, offsetRef.current, onHistoryUp, onHistoryDown)
     if (edit.value !== undefined) { valueRef.current = edit.value; onChange(edit.value) }
     if (edit.offset !== undefined) { offsetRef.current = edit.offset; setOffset(edit.offset) }
@@ -156,10 +219,18 @@ export function CliTextInput({ value, onChange, onSubmit, onHistoryUp, onHistory
   const at = value[offset] ?? ' '
   const after = value.slice(offset + 1)
   return (
-    <Box>
-      <Text>{before}</Text>
-      <Text inverse>{at}</Text>
-      <Text>{after}</Text>
+    <Box flexDirection="column">
+      <Box>
+        <Text>{before}</Text>
+        <Text inverse>{at}</Text>
+        <Text>{after}</Text>
+      </Box>
+      {active?.error === undefined ? null : <Text color="yellow">{active.error}</Text>}
+      {active?.items.slice(first, first + 7).map(item => (
+        <Text key={item.kind + ':' + item.id} dimColor={item.disabled === true} inverse={picked === item}>
+          {picked === item ? '› ' : '  '}{item.label}{item.detail ? ' · ' + item.detail : ''}
+        </Text>
+      ))}
     </Box>
   )
 }

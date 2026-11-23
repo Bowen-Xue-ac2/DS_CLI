@@ -50,10 +50,13 @@ dsh cli --resume session-xxxx
 
 输入消息并按 **Enter** 发送给 Agent。消息和工具状态显示在输入栏上方。
 
+输入 `/` 搜索当前会话可用的 Skills。用方向键和 **Tab** 或 **Enter** 选中 Skill，再输入请求并按 **Enter** 发送。`$name` 可手动调用已知 Skill。输入 `@` 可补全工作区路径与会话引用。按 **Esc** 关闭菜单并保留草稿。
+
 | 命令 | 作用 |
 | --- | --- |
 | `/exit` | 退出 CLI |
 | `/help` | 显示帮助 |
+| `/commands` | 查看 Host 为当前会话注册的命令 |
 | `/clear` | 清空当前显示的对话 |
 | `/workspace` | 选择工作区或浏览目录，再打开已有会话或新建 |
 | `/sessions [query]`、`/resume [id]` | 在终端内打开保存的会话 |

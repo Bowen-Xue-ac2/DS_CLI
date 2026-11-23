@@ -50,10 +50,13 @@ dsh cli --resume session-xxxx
 
 Type a message and press **Enter** to send it to the Agent. Messages and tool status appear above the input bar.
 
+Type `/` to search for Skills available in the current session. Use the arrow keys and **Tab** or **Enter** to pick a Skill, then add your request and press **Enter** to send it. `$name` is a typing shortcut for a known Skill. Type `@` to complete workspace paths and session references. **Esc** closes the menu and preserves the draft.
+
 | Command | Effect |
 | --- | --- |
 | `/exit` | Exit the CLI |
 | `/help` | Show help |
+| `/commands` | List commands registered by the Host for this session |
 | `/clear` | Clear the visible transcript |
 | `/workspace` | Select a workspace, browse directories, and choose an existing or new session |
 | `/sessions [query]`, `/resume [id]` | Open a saved session from inside the terminal |

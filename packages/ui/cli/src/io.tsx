@@ -6,13 +6,18 @@
 
 import * as React from 'react'
 import { render } from 'ink'
-import { CliApp, type CliAppProps } from './app.tsx'
+import { CliApp, type CliAppProps, type CliSubmission } from './app.tsx'
+import type { CliCompletionSource } from './completion.ts'
 import type { CliViewStoreLike } from './hooks/use-cli-view.ts'
 import type { CliMenu, CliMenuResult } from './start-menu.tsx'
 
 /** The io contract the driver consumes: read a line, then dispose. */
 export interface InteractiveIo {
   nextLine(): Promise<string | null>
+  /** Read a submission and its chosen completion identities. */
+  nextSubmission(): Promise<CliSubmission | null>
+  /** Restore a rejected submission if the original session's draft is still empty. */
+  restoreSubmission(submission: CliSubmission): void
   /** @param menu - temporary keyboard choices. @param signal - caller lifetime. @returns values or cancellation. */
   choose(menu: CliMenu, signal?: AbortSignal): Promise<CliMenuResult>
   dispose(): void
@@ -32,6 +37,8 @@ export interface InteractiveIoOptions {
   onHistoryDown?(this: void, current: string): string | undefined
   /** Shift+Tab cycles the permission preset. */
   onCyclePermission?(this: void): void
+  /** Inspect current-session completion metadata. */
+  completion?: CliCompletionSource
 }
 
 /**
@@ -40,11 +47,12 @@ export interface InteractiveIoOptions {
  * @returns a nextLine that resolves each submitted line, plus dispose.
  */
 export function createInteractiveIo(options: InteractiveIoOptions): InteractiveIo {
-  let pending: ((line: string | null) => void) | null = null
+  let pending: ((submission: CliSubmission | null) => void) | null = null
   // Buffered submitted lines: a prompt typed while the agent is busy waits
   // here (runRepl is blocked on whenIdle and has no nextLine outstanding),
   // instead of being dropped as "no reaction".
-  const buffer: string[] = []
+  const buffer: CliSubmission[] = []
+  let restore: CliSubmission | undefined
   let disposed = false
   // Whether the terminal was switched to the alternate screen. Idempotent so
   // the dispose path and the process-exit fallback never double-send.
@@ -62,13 +70,13 @@ export function createInteractiveIo(options: InteractiveIoOptions): InteractiveI
   }
   // The ink tree alone consumes stdin: any extra 'readable' listener would
   // compete for the same stream and starve ink's keypress handling.
-  const resolveNext = (line: string | null): void => {
+  const resolveNext = (submission: CliSubmission | null): void => {
     if (pending !== null) {
       const resolve = pending
       pending = null
-      resolve(line)
-    } else if (line !== null) {
-      buffer.push(line)
+      resolve(submission)
+    } else if (submission !== null) {
+      buffer.push(submission)
     }
   }
   // Switch to the alternate screen first so the transcript owns the whole
@@ -94,13 +102,15 @@ export function createInteractiveIo(options: InteractiveIoOptions): InteractiveI
     return (
       <CliApp
         store={options.view}
-        onSubmit={resolveNext}
+        onSubmit={(_line, submission) => { resolveNext(submission) }}
         onCtrlC={options.onCancel}
         onExit={() => { options.onExit(); resolveNext(null) }}
         {...(options.onHistoryUp === undefined ? {} : { onHistoryUp: options.onHistoryUp })}
         {...(options.onHistoryDown === undefined ? {} : { onHistoryDown: options.onHistoryDown })}
         {...(options.onCyclePermission === undefined ? {} : { onCyclePermission: options.onCyclePermission })}
         {...(activeMenu === undefined ? {} : { menu: activeMenu })}
+        {...(options.completion === undefined ? {} : { completion: options.completion })}
+        {...(restore === undefined ? {} : { restore })}
       />
     )
   }
@@ -111,13 +121,19 @@ export function createInteractiveIo(options: InteractiveIoOptions): InteractiveI
   if (process.stdin.isTTY) {
     try { process.stdin.setRawMode(true) } catch { /* non-tty stdin */ }
   }
+  function nextSubmission(): Promise<CliSubmission | null> {
+    if (disposed) return Promise.resolve(null)
+    if (pending !== null) return Promise.reject(new Error('cli-ui: concurrent nextLine'))
+    const buffered = buffer.shift()
+    if (buffered !== undefined) return Promise.resolve(buffered)
+    return new Promise<CliSubmission | null>((resolve) => { pending = resolve })
+  }
   return {
-    nextLine: () => {
-      if (disposed) return Promise.resolve(null)
-      if (pending !== null) return Promise.reject(new Error('cli-ui: concurrent nextLine'))
-      const buffered = buffer.shift()
-      if (buffered !== undefined) return Promise.resolve(buffered)
-      return new Promise<string | null>((resolve) => { pending = resolve })
+    async nextLine() { return (await nextSubmission())?.text ?? null },
+    nextSubmission,
+    restoreSubmission(submission) {
+      restore = submission
+      if (!disposed) instance.rerender(element())
     },
     choose: (content, signal) => {
       if (disposed || signal?.aborted) return Promise.resolve({ kind: 'cancel' })
