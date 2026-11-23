@@ -68,6 +68,8 @@ Type `@agent:` to find configured Agent presets. Select a preset, add your reque
 | `/agent` or `/mode` | Choose the primary Agent before sending a message |
 | `/model <model>` | Switch the model for this session |
 | `/permission` or **Shift+Tab** | Choose a current preset or a default for future sessions |
+| `/mcp` or `/connectors` | View managed Host connections |
+| `/mcp probe <server>`, `/mcp restart <server>` | Probe a configured server or confirm a live connection restart |
 
 The approval menu offers **Deny** and **Allow once** for the requesting tool. Full access requires an explicit confirmation.
 

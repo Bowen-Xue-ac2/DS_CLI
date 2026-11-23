@@ -175,6 +175,21 @@ export interface ClientRemote {
     }[]>>
   }
   readonly permissionPresets: { catalog(): Promise<HostResult<TerminalPermissionCatalog>> }
+  readonly mcpManager: {
+    watch(signal: AbortSignal): AsyncIterable<readonly {
+      readonly name: string
+      readonly configured: boolean
+      readonly status: { readonly state: string }
+    }[]>
+    probe(name: string, signal: AbortSignal): Promise<HostResult<{
+      readonly closeConfirmed: boolean
+      readonly cleanupError?: string
+    } & (
+      | { readonly ok: true; readonly toolNames: readonly string[]; readonly truncated: boolean }
+      | { readonly ok: false; readonly stage: 'connect' | 'list' }
+    )>>
+    restart(name: string): Promise<HostResult<void>>
+  }
   readonly settings: {
     describe(): Promise<HostResult<{
       readonly writable: boolean

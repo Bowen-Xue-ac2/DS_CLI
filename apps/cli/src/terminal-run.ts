@@ -22,10 +22,11 @@ import { permissionCatalog, permissionRevision, setDefaultPermission, setSession
 import { listTerminalSessions, loadTerminalSession } from './terminal-sessions.ts'
 import { terminalCompletions, terminalComposerScope } from './terminal-composer.ts'
 import { resolveTerminalSubmission } from './terminal-commands.ts'
+import { runMcpCommand } from './terminal-connectors.ts'
 
 const LOCAL_COMMANDS = new Set([
   'help', 'commands', 'sessions', 'resume', 'new', 'history', 'fork', 'rename', 'archive', 'unarchive',
-  'pin', 'unpin', 'clear', 'workspace', 'cd', 'agent', 'mode', 'permission', 'exit', 'quit',
+  'pin', 'unpin', 'clear', 'workspace', 'cd', 'agent', 'mode', 'permission', 'mcp', 'connectors', 'exit', 'quit',
 ])
 
 const INITIAL_VIEW: CliViewState = {
@@ -672,7 +673,11 @@ export async function runTerminal(args: readonly string[], patches: readonly str
         if (action === '/exit' || action === '/quit') break
         switch (action) {
           case '/help':
-            view.notice('/sessions [query]  /resume [id]  /new  /workspace  /cd [path]  /history  /fork  /rename  /archive  /unarchive  /pin  /unpin  /agent  /permission  /clear  /exit')
+            view.notice('/sessions [query]  /resume [id]  /new  /workspace  /cd [path]  /history  /fork  /rename  /archive  /unarchive  /pin  /unpin  /agent  /permission  /mcp  /clear  /exit')
+            break
+          case '/mcp':
+          case '/connectors':
+            view.notice(await runMcpCommand(activeHost, io, arg))
             break
           case '/sessions':
           case '/resume': {

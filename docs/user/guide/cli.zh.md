@@ -68,6 +68,8 @@ dsh cli --resume session-xxxx
 | `/agent` 或 `/mode` | 在发送首条消息前选择主 Agent |
 | `/model <model>` | 切换本会话的模型 |
 | `/permission` 或 **Shift+Tab** | 设置当前会话权限或未来新会话默认值 |
+| `/mcp` 或 `/connectors` | 查看 Host 管理的连接状态 |
+| `/mcp probe <server>`、`/mcp restart <server>` | 探测已配置的服务器，或确认后重启连接 |
 
 工具请求审批时，可以拒绝或允许一次。启用完全访问时会弹出独立确认。
 
