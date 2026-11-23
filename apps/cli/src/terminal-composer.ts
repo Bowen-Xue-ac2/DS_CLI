@@ -47,13 +47,26 @@ export async function terminalCompletions(
         detail: skill.path === undefined ? skill.description : `${skill.description} · ${skill.path}`,
       }))
   }
+  const agentQuery = match.query.replace(/^agent:/iu, '')
+  const { presets } = requireHostResult(await host.remote.agentPresets.list())
+  lifetime.throwIfAborted()
+  const agents: CliCompletionItem[] = presets
+    .filter(preset => fits(preset.id, agentQuery) || fits(preset.name ?? '', agentQuery))
+    .map(preset => ({
+      id: preset.id, kind: 'agent', scope,
+      label: preset.name ?? preset.id, insert: '@agent:' + preset.id,
+      detail: preset.broken ?? 'New session with this Agent',
+      disabled: preset.broken !== undefined,
+    }))
+  if (/^agent:/iu.test(match.query)) return agents
   const { items } = requireHostResult(await host.remote.session.list({}, lifetime))
-  if (!items.some(item => item.sessionId === sessionId && item.agentAvailable)) return []
+  if (!items.some(item => item.sessionId === sessionId && item.agentAvailable)) return agents
   const [files, references] = await Promise.all([
     host.remote.fileReferences.list(sessionId, match.query, lifetime),
     host.remote.sessionReferenceResolver.candidates(sessionId, match.query, lifetime),
   ])
   return [
+    ...agents,
     ...requireHostResult(files).map(file => ({
       id: file.path, kind: 'file' as const, scope, label: file.path,
       insert: '@' + (/\s|"/u.test(file.path) ? JSON.stringify(file.path) : file.path),

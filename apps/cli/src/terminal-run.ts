@@ -7,7 +7,7 @@ import { realpath, stat } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { Command, CommanderError } from 'commander'
 import {
-  createInteractiveIo, type CliViewItem, type CliViewState, type InteractiveIo,
+  createInteractiveIo, type CliSubmission, type CliViewItem, type CliViewState, type InteractiveIo,
 } from '@deepseek-ai/dsh-cli-ui'
 import { expandHomePath } from '@deepseek-ai/dsh-home-paths'
 import {
@@ -379,6 +379,14 @@ export async function runTerminal(args: readonly string[], patches: readonly str
   let openPermissions: (() => Promise<void>) | undefined
   const pendingToolTargets = new Map<string, string>()
   const unacknowledged = new Map<string, { text: string; requestId: string }>()
+  const presetAttempts = new Map<string, {
+    draft: string
+    preset: string
+    permission: string
+    sessionId: string
+    requestId: string
+  }>()
+  let approvalTarget: string | undefined
   const io = createInteractiveIo({
     view,
     async completion(match, signal) {
@@ -399,7 +407,7 @@ export async function runTerminal(args: readonly string[], patches: readonly str
     activeHost.signal.addEventListener('abort', () => io.dispose(), { once: true })
     const { remote, signal } = activeHost
     detachApprovals = activeHost.answerApprovals(
-      () => current?.sessionId,
+      () => approvalTarget ?? current?.sessionId,
       request => answerApproval(io, request, request.callId === undefined ? undefined : pendingToolTargets.get(request.callId)),
     )
 
@@ -504,6 +512,88 @@ export async function runTerminal(args: readonly string[], patches: readonly str
       await attach(session)
     }
 
+    async function sendToPreset(draft: CliSubmission, source: TerminalActiveSession): Promise<boolean> {
+      const selected = draft.selections.filter(item => item.kind === 'agent')
+      if (selected.length === 0) return false
+      const choice = selected[0]
+      const mentions = [...draft.text.matchAll(/\S+/gu)].filter(match => match[0].startsWith('@agent:'))
+      const mention = mentions[0]
+      if (selected.length !== 1 || choice === undefined || mentions.length !== 1 || mention?.[0] !== choice.insert) {
+        throw new Error('Pick one Agent for this message')
+      }
+      const text = (draft.text.slice(0, mention.index) + draft.text.slice(mention.index + mention[0].length)).trim()
+      if (text === '') throw new Error('Add a message for the selected Agent')
+      const preset = (await roster(activeHost)).find(item => item.id === choice.id && item.broken === undefined)
+      if (preset === undefined) throw new Error('The selected Agent is no longer available')
+      let pending = presetAttempts.get(source.sessionId)
+      let target: TerminalActiveSession
+      if (pending === undefined) {
+        const { defaultPreset } = await permissionCatalog(activeHost)
+        const answer = await io.choose({
+          title: 'Send to a new Agent session?',
+          detail: `${preset.name ?? preset.id} · ${source.cwd} · ${defaultPreset}`,
+          fields: [{ label: 'Action', initial: 'cancel', options: [
+            { id: 'cancel', label: 'Keep draft' }, { id: 'send', label: 'Send' },
+          ] }],
+        }, signal)
+        if (answer.kind !== 'chosen' || answer.values[0] !== 'send' || !await confirmFullAccess(io, defaultPreset)) {
+          io.restoreSubmission(draft)
+          return true
+        }
+        pending = {
+          draft: draft.text, preset: preset.id, permission: defaultPreset,
+          sessionId: `session-${randomUUID()}`, requestId: randomUUID(),
+        }
+        presetAttempts.set(source.sessionId, pending)
+        target = await commitStart(activeHost, {
+          workspacePath: source.workspace.path, cwd: source.cwd, agentPreset: preset.id,
+        }, pending.sessionId)
+        if (target.sessionId !== pending.sessionId) throw new Error('The Host returned an unexpected target session')
+        if ((await projection(target.sessionId)).permissions?.currentValue !== defaultPreset) {
+          await setSessionPermission(activeHost, target.sessionId, defaultPreset)
+        }
+      } else {
+        if (pending.draft !== draft.text || pending.preset !== preset.id) {
+          throw new Error(`Check pending Agent session ${pending.sessionId} before sending a different draft`)
+        }
+        target = await loadTerminalSession(activeHost, pending.sessionId, signal)
+      }
+      const state = await projection(target.sessionId)
+      if (target.workspace.workspaceId !== source.workspace.workspaceId || target.cwd !== source.cwd
+        || state.agentPreset !== preset.id || state.permissions?.currentValue !== pending.permission) {
+        throw new Error(`Agent session ${target.sessionId} changed. Check its workspace, directory and permissions before sending.`)
+      }
+      for (const item of draft.selections) {
+        if (item.kind === 'file' || item.kind === 'session') {
+          const candidates = await terminalCompletions(activeHost, target, {
+            trigger: '@', query: item.id, start: 0, end: 0,
+          }, signal)
+          if (!candidates.some(candidate => candidate.kind === item.kind && candidate.id === item.id)) {
+            throw new Error(`Reference is unavailable in the target session: ${item.label}`)
+          }
+        }
+        if (item.kind === 'connector') throw new Error('Pick the Connector from the target session before sending')
+      }
+      const skill = draft.selections.find(item => item.kind === 'skill')
+      const skills = skill !== undefined || /^[/$][a-z0-9]/u.test(text)
+        ? requireHostResult(await remote.skills.list({ sessionId: target.sessionId }, signal)).skills
+        : []
+      const routed = resolveTerminalSubmission({
+        text, sessionId: target.sessionId,
+        ...(skill === undefined ? {} : { skill: { name: skill.id, sessionId: target.sessionId } }),
+      }, { skills, commands: [] })
+      approvalTarget = target.sessionId
+      try {
+        requireHostResult(await remote.session.prompt({
+          sessionId: target.sessionId, requestId: pending.requestId, mode: 'queue',
+          content: [{ type: 'text', text: routed.text }],
+        }, signal))
+        presetAttempts.delete(source.sessionId)
+        await attach(target).catch(error => view.notice(`Sent to ${target.sessionId}. ${message(error)}`))
+      } finally { approvalTarget = undefined }
+      return true
+    }
+
     const [workspaces, presets] = await Promise.all([activeHost.listWorkspaces(signal), roster(activeHost)])
     const resumed = flags.choose ? undefined : await resumeSession(activeHost, workspaces, cwd, flags.resume)
     if (resumed !== undefined) {
@@ -546,6 +636,7 @@ export async function runTerminal(args: readonly string[], patches: readonly str
           || submission.selections.some(item => item.scope !== terminalComposerScope(session))) {
           throw new Error('The draft belongs to another terminal context. Pick its references again.')
         }
+        if (await sendToPreset(submission, session)) continue
         const selectedSkill = submission.selections.find(item => item.kind === 'skill')
         const isLocal = action !== undefined && LOCAL_COMMANDS.has(action.slice(1))
         const isCandidate = selectedSkill !== undefined || (!isLocal && /^\s*[/$][a-z0-9]/u.test(line))

@@ -48,7 +48,7 @@ export function launch(shell: 'pwsh.exe' | 'bash.exe', cwd: string, vars: Record
     pty.onExit((event) => { closed = true; done(event.exitCode) })
   })
   return {
-    output: () => stripVTControlCharacters(output),
+    output: (since = 0) => stripVTControlCharacters(output.slice(since)),
     mark: () => output.length,
     until: async (text: string, since = 0) => {
       await vi.waitFor(() => {

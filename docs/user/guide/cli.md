@@ -52,6 +52,8 @@ Type a message and press **Enter** to send it to the Agent. Messages and tool st
 
 Type `/` to search for Skills available in the current session. Use the arrow keys and **Tab** or **Enter** to pick a Skill, then add your request and press **Enter** to send it. `$name` is a typing shortcut for a known Skill. Type `@` to complete workspace paths and session references. **Esc** closes the menu and preserves the draft.
 
+Type `@agent:` to find configured Agent presets. Select a preset, add your request, and review the work directory and permission before sending. The request starts in a new session, and you can return to the original conversation with `/sessions`.
+
 | Command | Effect |
 | --- | --- |
 | `/exit` | Exit the CLI |
