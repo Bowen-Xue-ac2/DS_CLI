@@ -19,6 +19,7 @@ import {
   type TerminalActiveSession, type TerminalAgentPreset, type TerminalStartIntent,
 } from './terminal-start.ts'
 import { permissionCatalog, permissionRevision, setDefaultPermission, setSessionPermission } from './terminal-permissions.ts'
+import { listTerminalSessions, loadTerminalSession } from './terminal-sessions.ts'
 
 const INITIAL_VIEW: CliViewState = {
   items: [], busy: false, sessionId: '', permission: '', inputLocked: true,
@@ -235,16 +236,44 @@ async function resumeSession(
   } else {
     sessionId = choice
   }
-  const projection = requireHostResult(await host.remote.session.projections({ sessionId }, host.signal))
-  if (projection === null) throw new Error(`Session ${sessionId} is unavailable`)
-  if (projection.kind === 'migration-required') throw new Error(`Session ${sessionId} requires Host migration`)
-  const agentPreset = projection.values.agentPreset
-  return {
-    sessionId, workspace: owner, cwd: await changeDirectory(host, sessionId),
-    ...(typeof agentPreset === 'string' ? { agentPreset } : {}),
-  }
+  return loadTerminalSession(host, sessionId, host.signal)
 }
 
+async function chooseSession(
+  io: InteractiveIo, host: TerminalHost, scope: string | undefined, query?: string, archived = false,
+): Promise<string | undefined> {
+  let search = query
+  while (!host.signal.aborted) {
+    const choices = await listTerminalSessions(host, {
+      ...(scope === undefined ? {} : { scope }),
+      ...(search === undefined ? {} : { query: search }),
+      archived,
+    }, host.signal)
+    const options = choices.map(item => ({
+      id: item.address.sessionId,
+      label: item.title + (item.running ? ' (running)' : ''),
+      detail: item.needsMigration ? 'Requires Host migration' : item.detail,
+      disabled: item.needsMigration,
+    }))
+    const result = await io.choose({
+      title: archived ? 'Choose an archived session' : 'Choose a session',
+      fields: [{ label: 'Session', initial: options.find(item => !item.disabled)?.id ?? ':search', options: [
+        ...options,
+        { id: ':search', label: 'Search across workspaces' },
+      ] }],
+    }, host.signal)
+    if (result.kind !== 'chosen') return undefined
+    const id = result.values[0]
+    if (id !== ':search') return id
+    const input = await io.choose({
+      title: 'Search sessions',
+      fields: [{ label: 'Text or path', initial: search ?? '', path: true }],
+    }, host.signal)
+    if (input.kind !== 'chosen') return undefined
+    search = input.values[0]
+  }
+  return undefined
+}
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
@@ -338,6 +367,7 @@ export async function runTerminal(args: readonly string[], patches: readonly str
   let host: TerminalHost | undefined
   let follow: AbortController | undefined
   let consuming: Promise<void> | undefined
+  let historyBefore: number | undefined
   let detachApprovals: (() => void) | undefined
   let openPermissions: (() => Promise<void>) | undefined
   const pendingToolTargets = new Map<string, string>()
@@ -414,17 +444,25 @@ export async function runTerminal(args: readonly string[], patches: readonly str
       follow = new AbortController()
       const streamSignal = AbortSignal.any([signal, follow.signal])
       current = session
+      historyBefore = undefined
+      let lastSeq = -1
+      const display = (event: TerminalSessionEvent): void => {
+        if (event.seq <= lastSeq) return
+        lastSeq = event.seq
+        showEvent(view, event)
+      }
       pendingToolTargets.clear()
       view.update({
         sessionId: session.sessionId, project: session.workspace.title, cwd: session.cwd,
         permission: state.permissions?.currentValue ?? '', mode: state.agentPreset ?? session.agentPreset,
-        items: [], busy: false, inputLocked: false,
+        items: [], stats: INITIAL_VIEW.stats, busy: false, inputLocked: false,
       })
       consuming = (async () => {
         for await (const frame of remote.session.follow({ address: { kind: 'session', sessionId: session.sessionId }, activate: true }, streamSignal)) {
           if (streamSignal.aborted) break
           if (frame.type === 'snapshot') {
-            for (const entry of frame.records) showEvent(view, entry.event)
+            historyBefore = frame.hasMore ? frame.records[0]?.event.seq : undefined
+            for (const entry of frame.records) display(entry.event)
           } else if (frame.type === 'event') {
             const { type, data } = frame.event
             const fields = record(data)
@@ -435,7 +473,7 @@ export async function runTerminal(args: readonly string[], patches: readonly str
               const id = record(fields.message).toolCallId
               if (typeof id === 'string') pendingToolTargets.delete(id)
             }
-            showEvent(view, frame.event)
+            display(frame.event)
           }
         }
       })().catch((error) => {
@@ -494,8 +532,76 @@ export async function runTerminal(args: readonly string[], patches: readonly str
       try {
         switch (action) {
           case '/help':
-            view.notice('/workspace  /cd [path]  /agent  /mode  /permission  /clear  /exit')
+            view.notice('/sessions [query]  /resume [id]  /new  /workspace  /cd [path]  /history  /fork  /rename  /archive  /unarchive  /pin  /unpin  /agent  /permission  /clear  /exit')
             break
+          case '/sessions':
+          case '/resume': {
+            const id = action === '/resume' && arg
+              ? arg
+              : await chooseSession(io, activeHost, session.workspace.workspaceId, arg)
+            if (id !== undefined && id !== session.sessionId) await attach(await loadTerminalSession(activeHost, id, signal))
+            break
+          }
+          case '/new':
+            await newSession({ workspacePath: session.workspace.path, cwd: session.cwd,
+              ...(session.agentPreset === undefined ? {} : { agentPreset: session.agentPreset }) })
+            break
+          case '/history': {
+            if (historyBefore === undefined) { view.notice('No earlier history'); break }
+            const page = requireHostResult(await remote.session.page({
+              address: { kind: 'session', sessionId: session.sessionId }, beforeSeq: historyBefore,
+            }, signal))
+            const history = createView()
+            for (const entry of page.records) showEvent(history, entry.event)
+            historyBefore = page.hasMore ? page.records[0]?.event.seq : undefined
+            view.update({ items: [...history.getSnapshot().items, ...view.getSnapshot().items] })
+            break
+          }
+          case '/fork': {
+            const fork = requireHostResult(await remote.session.fork({ sessionId: session.sessionId, allowMigration: false }))
+            await attach(await loadTerminalSession(activeHost, fork.sessionId, signal))
+            break
+          }
+          case '/rename': {
+            if (!arg) { view.notice('Usage: /rename <title>'); break }
+            const renamed = requireHostResult(await remote.session.rename({ sessionId: session.sessionId, title: arg }))
+            view.notice(`Session renamed to ${renamed.title}`)
+            break
+          }
+          case '/archive': {
+            const sessionId = arg || session.sessionId
+            const result = await remote.workspace.archiveSession({ sessionId })
+            if (!result.ok && result.error.code === 'workspace/session-active') {
+              const answer = await io.choose({
+                title: 'Stop active work and archive this session?',
+                fields: [{ label: 'Archive', initial: 'cancel', options: [
+                  { id: 'cancel', label: 'Keep session' }, { id: 'stop', label: 'Stop work and archive' },
+                ] }],
+              }, signal)
+              if (answer.kind !== 'chosen' || answer.values[0] !== 'stop') break
+              requireHostResult(await remote.workspace.archiveSession({ sessionId, stopActivity: true }))
+            } else {
+              requireHostResult(result)
+            }
+            view.notice(`Archived session ${sessionId}`)
+            break
+          }
+          case '/unarchive': {
+            const sessionId = arg || await chooseSession(io, activeHost, undefined, undefined, true)
+            if (sessionId === undefined) break
+            requireHostResult(await remote.workspace.unarchiveSession({ sessionId }))
+            view.notice(`Restored session ${sessionId}`)
+            break
+          }
+          case '/pin':
+          case '/unpin': {
+            const sessionId = arg || session.sessionId
+            requireHostResult(await (action === '/pin'
+              ? remote.workspace.pinSession({ sessionId })
+              : remote.workspace.unpinSession({ sessionId })))
+            view.notice(`${action === '/pin' ? 'Pinned' : 'Unpinned'} session ${sessionId}`)
+            break
+          }
           case '/clear':
             view.update({ items: [] })
             break
@@ -504,7 +610,24 @@ export async function runTerminal(args: readonly string[], patches: readonly str
               cwd: session.cwd, workspacePath: session.workspace.path,
               ...(session.agentPreset === undefined ? {} : { agentPreset: session.agentPreset }),
             })
-            if (selection !== undefined) await newSession(selection)
+            if (selection === undefined) break
+            const owner = (await activeHost.listWorkspaces(signal)).find(item => item.path === selection.workspacePath)
+            if (!owner?.sessionIds.some(id => id !== session.sessionId)) {
+              await newSession(selection)
+              break
+            }
+            const answer = await io.choose({
+              title: 'Open workspace',
+              fields: [{ label: 'Session', initial: 'existing', options: [
+                { id: 'existing', label: 'Choose an existing session' }, { id: 'new', label: 'Create a new session' },
+              ] }],
+            }, signal)
+            if (answer.kind !== 'chosen') break
+            if (answer.values[0] === 'new') await newSession(selection)
+            else {
+              const id = await chooseSession(io, activeHost, owner.workspaceId)
+              if (id !== undefined && id !== session.sessionId) await attach(await loadTerminalSession(activeHost, id, signal))
+            }
             break
           }
           case '/cd': {

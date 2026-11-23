@@ -36,12 +36,22 @@ export type HostResult<T> =
   | { readonly ok: true; readonly value: T }
   | { readonly ok: false; readonly error: { readonly code: string; readonly message: string } }
 
+interface WorkspaceBaseline {
+  readonly items: readonly TerminalWorkspace[]
+  readonly archivedSessionIds: readonly string[]
+  readonly pinnedSessionIds: readonly string[]
+}
+
 interface WorkspaceRemote {
   create(request: { path: string }): Promise<HostResult<TerminalWorkspaceRegistration>>
   follow(signal: AbortSignal): AsyncIterable<
-    | { readonly type: 'baseline'; readonly value: { readonly items: readonly TerminalWorkspace[] } }
+    | { readonly type: 'baseline'; readonly value: WorkspaceBaseline }
     | { readonly type: 'replace' | 'upsert' | 'remove' | 'order' | 'archived' | 'pinned' }
   >
+  archiveSession(request: { sessionId: string; stopActivity?: boolean }): Promise<HostResult<unknown>>
+  unarchiveSession(request: { sessionId: string }): Promise<HostResult<unknown>>
+  pinSession(request: { sessionId: string }): Promise<HostResult<unknown>>
+  unpinSession(request: { sessionId: string }): Promise<HostResult<unknown>>
 }
 
 /** Address of a primary session in the Host journal. */
@@ -56,6 +66,10 @@ export interface TerminalSessionSummary {
   readonly updatedAt: number
   readonly formatStatus?: 'current' | 'migration-required'
   readonly origin?: 'subagent'
+  readonly running?: boolean
+  readonly agentAvailable?: boolean
+  readonly cwd?: string
+  readonly projections?: { readonly values: { readonly title?: string } }
 }
 
 /** Host projection read by the terminal before enabling chat. */
@@ -76,8 +90,13 @@ export interface TerminalSessionEvent {
 
 /** Opening snapshot and subsequent committed records from a Host stream. */
 export type TerminalSessionFrame =
-  | { readonly type: 'snapshot'; readonly records: readonly { readonly type: 'event'; readonly event: TerminalSessionEvent }[] }
+  | { readonly type: 'snapshot'; readonly records: readonly TerminalSessionEntry[]; readonly hasMore: boolean }
   | { readonly type: 'event'; readonly event: TerminalSessionEvent }
+
+interface TerminalSessionEntry {
+  readonly type: 'event'
+  readonly event: TerminalSessionEvent
+}
 
 /** Native directory browser result. */
 export interface TerminalDirectoryListing {
@@ -121,6 +140,13 @@ export interface ClientRemote {
     Promise<HostResult<TerminalSessionProjection | null>>
     list(request: Record<string, never>, signal: AbortSignal):
     Promise<HostResult<{ readonly items: readonly TerminalSessionSummary[] }>>
+    search(request: { query: string }, signal: AbortSignal):
+    Promise<HostResult<{ readonly items: readonly { readonly sessionId: string; readonly snippet: string }[] }>>
+    page(request: { address: TerminalSessionAddress; beforeSeq: number }, signal: AbortSignal):
+    Promise<HostResult<{ readonly records: readonly TerminalSessionEntry[]; readonly hasMore: boolean }>>
+    fork(request: { sessionId: string; allowMigration: false }):
+    Promise<HostResult<{ readonly sessionId: string }>>
+    rename(request: { sessionId: string; title: string }): Promise<HostResult<{ readonly title: string }>>
     prompt(request: { sessionId: string; requestId: string; mode: 'queue'; content: readonly { type: 'text'; text: string }[] },
       signal: AbortSignal): Promise<HostResult<{ readonly accepted: true }>>
     cancel(request: { sessionId: string }): Promise<HostResult<unknown>>

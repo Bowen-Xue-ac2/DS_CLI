@@ -37,7 +37,16 @@ export interface CliAppProps {
 /** The assembled terminal UI. */
 export function CliApp({ store, onSubmit, onCtrlC, onExit, onHistoryUp, onHistoryDown, onCyclePermission, menu }: CliAppProps) {
   const view = useCliView(store)
-  const [input, setInput] = React.useState('')
+  const [drafts, setDrafts] = React.useState<ReadonlyMap<string, string>>(() => new Map())
+  const input = drafts.get(view.sessionId) ?? ''
+  function setInput(value: string): void {
+    setDrafts((previous) => {
+      const next = new Map(previous)
+      if (value === '') next.delete(view.sessionId)
+      else next.set(view.sessionId, value)
+      return next
+    })
+  }
   useInput((inputChar, key) => {
     // Keep Ink's raw input active while the prompt hands the keyboard to a menu.
     if (menu !== undefined) return
@@ -82,6 +91,7 @@ export function CliApp({ store, onSubmit, onCtrlC, onExit, onHistoryUp, onHistor
         <InkText color={view.busy ? 'yellow' : 'green'}>{view.busy ? '…' : '❯'} </InkText>
         <Box flexGrow={1} flexShrink={1}>
           <CliTextInput
+            key={view.sessionId}
             value={input}
             onChange={setInput}
             onSubmit={(line) => { onSubmit(line); setInput('') }}

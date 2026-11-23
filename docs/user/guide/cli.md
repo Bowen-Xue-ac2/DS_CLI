@@ -55,7 +55,10 @@ Type a message and press **Enter** to send it to the Agent. Messages and tool st
 | `/exit` | Exit the CLI |
 | `/help` | Show help |
 | `/clear` | Clear the visible transcript |
-| `/workspace` | Select a workspace or browse directories |
+| `/workspace` | Select a workspace, browse directories, and choose an existing or new session |
+| `/sessions [query]`, `/resume [id]` | Open a saved session from inside the terminal |
+| `/new`, `/fork`, `/history` | Start in this workspace, branch this session, or load older turns |
+| `/rename <title>`, `/archive`, `/unarchive`, `/pin`, `/unpin` | Organize conversations through the Host |
 | `/cd [path]` | Change the active working directory within the session |
 | `/agent` or `/mode` | Choose the primary Agent before sending a message |
 | `/model <model>` | Switch the model for this session |

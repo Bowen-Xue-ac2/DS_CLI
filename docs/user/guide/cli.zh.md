@@ -55,7 +55,10 @@ dsh cli --resume session-xxxx
 | `/exit` | 退出 CLI |
 | `/help` | 显示帮助 |
 | `/clear` | 清空当前显示的对话 |
-| `/workspace` | 选择工作区或浏览目录 |
+| `/workspace` | 选择工作区或浏览目录，再打开已有会话或新建 |
+| `/sessions [query]`、`/resume [id]` | 在终端内打开保存的会话 |
+| `/new`、`/fork`、`/history` | 在当前工作区新建会话、分支当前会话或载入更早轮次 |
+| `/rename <title>`、`/archive`、`/unarchive`、`/pin`、`/unpin` | 通过 Host 整理会话 |
 | `/cd [path]` | 修改当前会话的活动目录 |
 | `/agent` 或 `/mode` | 在发送首条消息前选择主 Agent |
 | `/model <model>` | 切换本会话的模型 |
