@@ -10,6 +10,7 @@
 
 export type { CliViewItem, CliViewState } from './types.ts'
 export { createInteractiveIo } from './io.tsx'
+export { statsSummary } from './status-bar.tsx'
 export type { InteractiveIo, InteractiveIoOptions } from './io.tsx'
 export type { CliMenu, CliMenuResult, CliMenuOption } from './start-menu.tsx'
 export type { CliCompletionItem, CliCompletionSource, TriggerMatch } from './completion.ts'

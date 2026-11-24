@@ -160,10 +160,25 @@ interface TerminalWorkspaceEntry {
   readonly type: 'file' | 'directory' | 'other'
 }
 
-/** Opening snapshot and subsequent committed records from a Host stream. */
+/** Opening snapshot, committed records, and optional live output from a Host stream. */
 export type TerminalSessionFrame =
-  | { readonly type: 'snapshot'; readonly records: readonly TerminalSessionEntry[]; readonly hasMore: boolean }
+  | {
+    readonly type: 'snapshot'
+    readonly records: readonly TerminalSessionEntry[]
+    readonly hasMore: boolean
+    readonly assistantStream?: { readonly activeAttempt?: TerminalAssistantAttempt & { readonly stream: readonly unknown[] } }
+  }
   | { readonly type: 'event'; readonly event: TerminalSessionEvent }
+  | { readonly type: 'assistant-stream'; readonly frame: TerminalAssistantStreamFrame }
+
+type TerminalAssistantStreamFrame = { readonly type: 'start'; readonly attemptId: string }
+  | { readonly type: 'chunk'; readonly attemptId: string; readonly index: number; readonly chunk: unknown }
+  | { readonly type: 'end'; readonly attemptId: string; readonly outcome: { readonly kind: 'committed' | 'abandoned' } }
+
+interface TerminalAssistantAttempt {
+  readonly attemptId: string
+  readonly nextIndex: number
+}
 
 interface TerminalSessionEntry {
   readonly type: 'event'
@@ -256,7 +271,8 @@ export interface ClientRemote extends TerminalPluginsRemote, TerminalAutomationR
   readonly session: {
     create(request: { workspaceId: string; sessionId: string; agentPreset?: string }):
     Promise<HostResult<{ readonly sessionId: string; readonly agentPreset?: string }>>
-    follow(request: { address: TerminalSessionAddress; activate?: boolean }, signal: AbortSignal): AsyncIterable<TerminalSessionFrame>
+    follow(request: { address: TerminalSessionAddress; activate?: boolean; assistantStream?: true }, signal: AbortSignal):
+    AsyncIterable<TerminalSessionFrame>
     projections(request: { sessionId: string }, signal: AbortSignal):
     Promise<HostResult<TerminalSessionProjection | null>>
     modelCatalog(): Promise<HostResult<TerminalModelCatalog>>
@@ -404,6 +420,8 @@ export interface OpenTerminalHostOptions {
 export interface TerminalHost {
   readonly remote: ClientRemote
   readonly signal: AbortSignal
+  /** @param stream - compact assistant stream from the pinned Host. @returns its expanded chunks. */
+  expandAssistantStream(stream: readonly unknown[]): readonly { readonly chunk: unknown }[]
   /** Read or upload via the authenticated HTTP routes served by the same local Host. */
   requestResource(input: string, init?: RequestInit): Promise<Response>
   /** Close only this authenticated peer. */
@@ -617,12 +635,13 @@ export async function connectTerminalHost(options: OpenTerminalHostOptions, url:
   const fromWeb = createRequire(fromRuntime.resolve('@deepseek-ai/dsh-web-app/package.json'))
   const fromBase = createRequire(fromRuntime.resolve('@deepseek-ai/dsh-base/package.json'))
   const fromGateway = createRequire(fromBase.resolve('@deepseek-ai/dsh-api-gateway/package.json'))
-  const [{ Context: RuntimeContext }, typert, carrier, gateway, remotes] = await Promise.all([
+  const [{ Context: RuntimeContext }, typert, carrier, gateway, remotes, { expandAssistantStream }] = await Promise.all([
     loadDependency<{ Context: new() => Context }>(fromRuntime, '@deepseek-ai/cordis'),
     loadDependency<ClientPlugin>(fromBase, '@deepseek-ai/dsh-typert-registry/client'),
     loadDependency<TerminalCarrier>(fromWeb, '@deepseek-ai/dsh-client-connection/client'),
     loadDependency<ClientPlugin>(fromBase, '@deepseek-ai/dsh-api-gateway/client'),
     loadRemotes(fromWeb),
+    loadDependency<Pick<TerminalHost, 'expandAssistantStream'>>(fromBase, '@deepseek-ai/dsh-llm/assistant-stream'),
   ])
   const { WebSocket } = fromGateway('ws') as { WebSocket: SocketFactory }
   const life = new AbortController()
@@ -675,7 +694,7 @@ export async function connectTerminalHost(options: OpenTerminalHostOptions, url:
     const { generation } = ctx.get('connection') as unknown as { generation: ConnectionGeneration }
     await ready(generation, startup)
     return {
-      remote, signal, requestResource, dispose, detach: dispose,
+      remote, signal, requestResource, expandAssistantStream, dispose, detach: dispose,
       answerApprovals(active, answer, questions) {
         const registry = ctx.get('typert') as unknown as {
           contexts: {

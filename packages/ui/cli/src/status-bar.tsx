@@ -68,6 +68,14 @@ export function statsSummary(view: CliViewState): string {
   return segments.join(' | ')
 }
 
+function statusLabel(view: CliViewState): string {
+  if (!view.busy) return '○ idle'
+  if (view.progress === 'thinking') return '● Thinking'
+  if (view.progress === 'responding') return '● Responding'
+  if (view.progress === 'tools') return '● Running tools'
+  return '● busy'
+}
+
 /**
  * Render the busy state and session id as the status line above the input
  * bar, upper-left.
@@ -77,7 +85,7 @@ export function StatusBar({ view }: { view: CliViewState }) {
   return (
     <Box flexShrink={0}>
       <Text color={view.busy ? 'yellow' : 'green'}>
-        {view.busy ? '● busy' : '○ idle'}
+        {statusLabel(view)}
       </Text>
       <Text dimColor>  {view.sessionId}</Text>
     </Box>
@@ -96,7 +104,7 @@ export function SessionStats({ view }: { view: CliViewState }) {
   // Leave room for the idle/session head on the same line's left; the strip
   // itself takes the rest of the row and truncates only at the right edge.
   const columns = stdout.columns && stdout.columns > 0 ? stdout.columns : 80
-  const max = columns - textWidth(`○ idle  ${view.sessionId}`) - 1
+  const max = columns - textWidth(`${statusLabel(view)}  ${view.sessionId}`) - 1
   if (max <= 0) return null
   const clipped = textWidth(summary) <= max ? summary : max === 1 ? '…' : truncateToWidth(summary, max - 1)
   return (

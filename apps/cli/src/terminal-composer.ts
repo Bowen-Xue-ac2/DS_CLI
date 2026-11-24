@@ -6,6 +6,7 @@ import { requireHostResult, type TerminalHost } from './terminal-host.ts'
 import type { TerminalMcpResources } from './terminal-mcp-resources.ts'
 import { terminalPluginCatalog } from './terminal-plugin-catalog.ts'
 import type { TerminalActiveSession } from './terminal-start.ts'
+import { terminalShortcuts } from './terminal-commands.ts'
 
 /**
  * Bind a selected item to its current working context.
@@ -74,13 +75,18 @@ export async function terminalCompletions(
   const scope = terminalComposerScope(session)
   const lifetime = AbortSignal.any([host.signal, signal])
   const sessionId = session.sessionId
-  if (match.trigger !== '@') {
+  if (match.trigger === '/') {
+    return terminalShortcuts(match.query).map(([name, detail]) => ({
+      id: name, kind: 'command', label: '/' + name, insert: '/' + name, detail, scope,
+    }))
+  }
+  if (match.trigger === '$') {
     const { skills } = requireHostResult(await host.remote.skills.list({ sessionId }, lifetime))
     const prefix = match.query.toLowerCase()
     return skills.filter(skill => fits(skill.name, prefix))
       .sort((a, b) => Number(b.name.toLowerCase().startsWith(prefix)) - Number(a.name.toLowerCase().startsWith(prefix)))
       .map(skill => ({
-        id: skill.name, kind: 'skill', label: '/' + skill.name, insert: '/' + skill.name, scope,
+        id: skill.name, kind: 'skill', label: '$' + skill.name, insert: '/' + skill.name, scope,
         detail: skill.path === undefined ? skill.description : `${skill.description} · ${skill.path}`,
       }))
   }

@@ -291,7 +291,10 @@ function toolRowLines(row: LayoutRow, expanded: boolean, width: number): RenderL
   const tools = row.tools ?? []
   if (!expanded) {
     const names = [...new Set(tools.map(t => t.name))].join(', ')
-    return wrapChars(plainChars(`⇣ ${tools.length} tool${tools.length > 1 ? 's' : ''} · ${names}`, { dim: true }), width)
+    const active = tools.filter(tool => tool.state === 'running').length
+    const failed = tools.filter(tool => tool.state === 'error').length
+    const state = [active ? `${active} running` : '', failed ? `${failed} failed` : ''].filter(Boolean).join(' · ')
+    return wrapChars(plainChars(`⇣ ${tools.length} tool${tools.length > 1 ? 's' : ''} · ${names}${state ? ' · ' + state : ''}`, { dim: true }), width)
   }
   return tools.flatMap((tool) => {
     const marker = tool.state === 'running' ? '…' : tool.state === 'cancelled' ? '−' : tool.state === 'error' ? '✗' : '✓'
@@ -305,10 +308,16 @@ function toolRowLines(row: LayoutRow, expanded: boolean, width: number): RenderL
 }
 
 /** Build the styled lines for a non-tool item. */
-function itemLines(item: NonToolItem, width: number): RenderLine[] {
+function itemLines(item: NonToolItem, width: number, details: boolean): RenderLine[] {
   switch (item.kind) {
     case 'user':
       return wrapChars(plainChars(`> ${item.text}`, { color: 'cyan' }), width)
+    case 'reasoning': {
+      const heading = item.streaming ? 'Thinking…' : 'Thinking'
+      if (details) return wrapChars(plainChars(`${heading}\n${item.text}`, { dim: true }), width)
+      const preview = item.streaming ? item.text.trim().replace(/\s+/gu, ' ').slice(-150) : ''
+      return wrapChars(plainChars(`${heading}${preview ? ' · ' + preview : ''} · Ctrl+T for details`, { dim: true }), width)
+    }
     case 'assistant': {
       // Render markdown both streaming and committed, so a `## heading` or
       // `**bold**` reads styled the moment it lands instead of showing raw
@@ -335,21 +344,22 @@ function itemLines(item: NonToolItem, width: number): RenderLine[] {
  * @param items - the conversation items.
  * @param width - the terminal width in columns.
  * @param expanded - per-tool-group expansion flags, indexed by group position.
+ * @param details - show provider reasoning and expanded tool output.
  * @returns the flat line list.
  */
-export function layoutItems(items: readonly CliViewItem[], width: number, expanded: boolean[]): RenderLine[] {
+export function layoutItems(items: readonly CliViewItem[], width: number, expanded: boolean[], details = false): RenderLine[] {
   const rows = foldRows(items)
   const out: RenderLine[] = []
   const blank: RenderLine = { runs: [] }
   let previousHadLines = false
   for (const [index, row] of rows.entries()) {
     if (row.tools !== undefined) {
-      const lines = toolRowLines(row, expanded[index] ?? false, width)
+      const lines = toolRowLines(row, details || (expanded[index] ?? false), width)
       if (lines.length === 0) continue
       if (previousHadLines) out.push(blank)
       out.push(...lines)
     } else if (row.item !== undefined) {
-      const lines = itemLines(row.item, width)
+      const lines = itemLines(row.item, width, details)
       if (lines.length === 0) continue
       if (previousHadLines && row.item.kind !== 'divider') out.push(blank)
       out.push(...lines)

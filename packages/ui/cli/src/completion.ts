@@ -8,10 +8,10 @@ export interface TriggerMatch {
   readonly query: string
 }
 
-/** A Host-backed choice with a stable identity, distinct from its text. */
+/** A completion choice with a stable identity, distinct from its text. */
 export interface CliCompletionItem {
   readonly id: string
-  readonly kind: 'skill' | 'file' | 'session' | 'agent' | 'connector' | 'plugin'
+  readonly kind: 'command' | 'skill' | 'file' | 'session' | 'agent' | 'connector' | 'plugin'
   readonly label: string
   readonly insert: string
   readonly scope: string

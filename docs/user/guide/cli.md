@@ -50,7 +50,9 @@ dsh cli --resume session-xxxx
 
 Type a message and press **Enter** to send it to the Agent. Messages and tool status appear above the input bar.
 
-Type `/` to search for Skills available in the current session. Use the arrow keys and **Tab** or **Enter** to pick a Skill, then add your request and press **Enter** to send it. `$name` is a typing shortcut for a known Skill. Type `@` to complete workspace paths and session references. **Esc** closes the menu and preserves the draft.
+Type `/` to see common commands such as `/session`, `/usage`, `/status`, and `/ps`. Type a prefix to find other terminal commands. Use the arrow keys to move, **Enter** to run the selection, or **Tab** to fill it in and add arguments. Type `$` to pick a Skill, or `@` to pick a workspace path or session. **Esc** dismisses the menu and keeps the draft.
+
+The status line shows when the model is thinking, responding, or running tools. Press **Ctrl+T** to open the transcript with expanded tool cards and reasoning text supplied by the model provider. Use **PgUp** or **PgDn** to scroll, and **Ctrl+T** or **Esc** to return to the draft. Use `/history` to load older turns before opening the transcript.
 
 Type `@agent:` to find configured Agent presets. Select a preset, add your request, and review the work directory and permission before sending. The request starts in a new session, and you can return to the original conversation with `/sessions`.
 
@@ -60,6 +62,10 @@ Type `@connector:` to find connected MCP servers available to this Agent. Select
 | --- | --- |
 | `/exit` | Exit the CLI |
 | `/help` | Show help |
+| `/session [query]` | Pick a saved conversation from this workspace |
+| `/usage` | Show session tokens, cache use, and timing |
+| `/status` | Show workspace, directory, Agent, permissions, and the last model used |
+| `/ps` | List this session's running jobs and persistent shells |
 | `/commands` | List commands registered by the Host for this session |
 | `/clear` | Clear the visible transcript |
 | `/workspace` | Select a workspace, browse directories, and choose an existing or new session |

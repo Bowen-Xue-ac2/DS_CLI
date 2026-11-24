@@ -16,12 +16,7 @@ export class TerminalAutomation {
     this.watching?.abort()
   }
 
-  async jobs(sessionId: string, input: string): Promise<string> {
-    const [action, second, third] = input.split(/\s+/u)
-    if (action === 'detach') {
-      this.detach()
-      return 'Detached from Job output'
-    }
+  private async jobSnapshot(sessionId: string) {
     const { job } = this.host.remote
     const snapshotLife = new AbortController()
     const snapshot = job.list({ sessionId }, AbortSignal.any([this.host.signal, snapshotLife.signal]))[Symbol.asyncIterator]()
@@ -29,7 +24,29 @@ export class TerminalAutomation {
       snapshotLife.abort()
       void snapshot.return?.().catch(() => {})
     })
-    const visible = rows.done === true ? [] : rows.value.jobs
+    return rows.done === true ? [] : rows.value.jobs
+  }
+
+  /** @param sessionId - session owning the processes. @returns its active job and shell inventory. */
+  async processes(sessionId: string): Promise<string> {
+    const [jobs, shells] = await Promise.all([this.jobSnapshot(sessionId), this.host.remote.terminal.list(sessionId)])
+    const rows = [
+      ...jobs.filter(job => job.status === 'running' || job.status === 'stopping')
+        .map(job => [`Job ${job.id}`, job.status, job.label, job.progress ?? job.detail].filter(Boolean).join(' · ')),
+      ...requireHostResult(shells).filter(shell => shell.state === 'running')
+        .map(shell => `Shell ${shell.id} · ${shell.state} · ${shell.title} · ${shell.cwd}`),
+    ]
+    return rows.length === 0 ? 'No active background jobs or shells in this session' : rows.join('\n')
+  }
+
+  async jobs(sessionId: string, input: string): Promise<string> {
+    const [action, second, third] = input.split(/\s+/u)
+    if (action === 'detach') {
+      this.detach()
+      return 'Detached from Job output'
+    }
+    const { job } = this.host.remote
+    const visible = await this.jobSnapshot(sessionId)
     if (!action) return visible.map(row => [row.id, row.status, row.label, row.progress ?? row.detail, `offset ${row.output.total}`]
       .filter(Boolean).join(' · ')).join('\n') || 'No jobs visible in this session'
     const id = action === 'stop' || action === 'follow' ? second : action

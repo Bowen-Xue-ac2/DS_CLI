@@ -5,9 +5,10 @@
 import { randomUUID } from 'node:crypto'
 import { realpath, stat } from 'node:fs/promises'
 import { dirname, relative, resolve } from 'node:path'
+import { stripVTControlCharacters } from 'node:util'
 import { Command, CommanderError } from 'commander'
 import {
-  createInteractiveIo, type CliSubmission, type CliViewItem, type CliViewState, type InteractiveIo,
+  createInteractiveIo, statsSummary, type CliSubmission, type CliViewItem, type CliViewState, type InteractiveIo,
 } from '@deepseek-ai/dsh-cli-ui'
 import { expandHomePath } from '@deepseek-ai/dsh-home-paths'
 import {
@@ -21,7 +22,7 @@ import {
 import { permissionCatalog, permissionRevision, setDefaultPermission, setSessionPermission } from './terminal-permissions.ts'
 import { listTerminalSessions, loadTerminalSession } from './terminal-sessions.ts'
 import { terminalCompletions, terminalComposerScope, validateTerminalReferences } from './terminal-composer.ts'
-import { resolveTerminalSubmission } from './terminal-commands.ts'
+import { LOCAL_COMMANDS, resolveTerminalSubmission } from './terminal-commands.ts'
 import { listTerminalConnectors, prepareConnectorPrompt, runMcpCommand } from './terminal-connectors.ts'
 import { TerminalMcpResources } from './terminal-mcp-resources.ts'
 import { runTerminalAgents, runTerminalTeam } from './terminal-delegation.ts'
@@ -35,19 +36,13 @@ import { openTerminalBrowser, requestTerminalBrowser } from './terminal-browser.
 import { preparePluginReferences } from './terminal-plugin-catalog.ts'
 import { runTerminalWorktree } from './terminal-worktrees.ts'
 
-const LOCAL_COMMANDS = new Set([
-  'help', 'commands', 'sessions', 'resume', 'new', 'history', 'fork', 'rename', 'archive', 'unarchive',
-  'pin', 'unpin', 'clear', 'workspace', 'cd', 'agent', 'agents', 'team', 'mode', 'permission',
-  'activity', 'model', 'questions', 'mcp', 'connectors', 'plugins', 'exit', 'quit',
-  'files', 'attach', 'diff', 'export', 'browser', 'worktree',
-  'jobs', 'schedule', 'terminal',
-])
-
 const INITIAL_VIEW: CliViewState = {
   items: [], busy: false, sessionId: '', permission: '', inputLocked: true,
   stats: { turns: 0, steps: 0, llmMs: 0, toolMs: 0, ttftMs: 0, ttftSteps: 0,
     inputTokens: 0, cacheReadTokens: 0, outputTokens: 0 },
 }
+
+type AssistantBlock = Extract<CliViewItem, { kind: 'assistant' | 'reasoning' }>
 
 function createView() {
   const listeners = new Set<() => void>()
@@ -59,6 +54,9 @@ function createView() {
   return {
     activity: new Map<string, TerminalActivityItem>(),
     modelSteps: new Map<string, number>(),
+    activeTools: new Set<string>(),
+    blocks: new Map<number, AssistantBlock>(),
+    lastModel: undefined as string | undefined,
     getSnapshot: () => state,
     subscribe(listener: () => void) {
       listeners.add(listener)
@@ -330,6 +328,39 @@ function messageText(value: unknown): string {
   return messageText(block.content ?? block.message ?? block.parts ?? '')
 }
 
+function assistantBlock(type: unknown, value: unknown, streaming: boolean): AssistantBlock | undefined {
+  if (typeof value !== 'string' || value === '' || (type !== 'text' && type !== 'reasoning')) return undefined
+  return { kind: type === 'text' ? 'assistant' : 'reasoning', text: stripVTControlCharacters(value), streaming }
+}
+
+function appendAssistantChunk(view: ReturnType<typeof createView>, chunk: Record<string, unknown>): boolean {
+  const index = chunk.index
+  if (typeof index !== 'number' || !Number.isSafeInteger(index) || index < 0) return false
+  let block: AssistantBlock | undefined
+  if (chunk.type === 'block-end') {
+    const finished = record(chunk.block)
+    block = assistantBlock(finished.type, finished.text, true)
+  } else if (chunk.type === 'text-delta' || chunk.type === 'reasoning-delta') {
+    const type = chunk.type === 'text-delta' ? 'text' : 'reasoning'
+    const delta = assistantBlock(type, chunk.text, true)
+    if (delta === undefined) return false
+    const previous = view.blocks.get(index)
+    block = { ...delta, text: ((previous?.kind === delta.kind ? previous.text : '') + delta.text).slice(-65_536) }
+  }
+  if (block === undefined) return false
+  view.blocks.set(index, { ...block, text: block.text.slice(-65_536) })
+  return true
+}
+
+function publishAssistant(view: ReturnType<typeof createView>): void {
+  const partial = [...view.blocks].sort(([a], [b]) => a - b).map(([, item]) => item)
+  view.update({
+    busy: true,
+    progress: partial.at(-1)?.kind === 'assistant' ? 'responding' : 'thinking',
+    partial,
+  })
+}
+
 function showEvent(view: ReturnType<typeof createView>, event: TerminalSessionEvent): void {
   const { items, stats } = view.getSnapshot()
   const data = record(event.data)
@@ -337,10 +368,14 @@ function showEvent(view: ReturnType<typeof createView>, event: TerminalSessionEv
   const stepKey = JSON.stringify([data.turn, data.step])
   switch (event.type) {
     case 'turn/start':
-      view.update({ busy: true })
+      view.activeTools.clear()
+      view.blocks.clear()
+      view.update({ busy: true, progress: undefined, partial: undefined })
       return
     case 'turn/end': {
-      view.update({ busy: false, stats: { ...stats, turns: stats.turns + 1 } })
+      view.activeTools.clear()
+      view.blocks.clear()
+      view.update({ busy: false, progress: undefined, partial: undefined, stats: { ...stats, turns: stats.turns + 1 } })
       const reason = record(data.reason)
       if (reason.kind === 'aborted') view.notice('Turn cancelled')
       if (reason.kind === 'error') {
@@ -352,10 +387,24 @@ function showEvent(view: ReturnType<typeof createView>, event: TerminalSessionEv
     }
     case 'step/start':
       if (event.time !== undefined) view.modelSteps.set(stepKey, event.time)
+      view.blocks.clear()
+      view.update({ progress: 'thinking', partial: undefined })
       return
     case 'step/end':
       view.modelSteps.delete(stepKey)
-      view.update({ stats: { ...stats, steps: stats.steps + 1 } })
+      view.blocks.clear()
+      view.update({ progress: undefined, partial: undefined, stats: { ...stats, steps: stats.steps + 1 } })
+      return
+    case 'request/header': {
+      const config = record(record(data.header).config)
+      if (typeof config.provider === 'string' && typeof config.model === 'string') {
+        view.lastModel = `${config.provider}/${config.model}${typeof config.reasoningEffort === 'string' ? ' · ' + config.reasoningEffort : ''}`
+      }
+      return
+    }
+    case 'assistant/attempt':
+      view.blocks.clear()
+      view.update({ progress: 'thinking', partial: undefined })
       return
     case 'user/message':
     case 'assistant/message': {
@@ -366,7 +415,15 @@ function showEvent(view: ReturnType<typeof createView>, event: TerminalSessionEv
         const first = Array.isArray(data.stream) ? data.stream.map(record)
           .find(chunk => chunk.type === 'text-chunks' || chunk.type === 'reasoning-chunks' || chunk.type === 'tool-call-chunks') : undefined
         const observed = start !== undefined && typeof first?.time0 === 'number'
-        view.update({ stats: {
+        const content = data.content ?? record(data.message).content ?? data.text ?? data.parts
+        const blocks = Array.isArray(content) ? content.flatMap((value) => {
+          const part = record(value)
+          return assistantBlock(part.type, part.text, false) ?? []
+        }) : []
+        const text = messageText(content ?? data.message)
+        const committed = blocks.length > 0 ? blocks : text === '' ? [] : [{ kind: 'assistant' as const, text, streaming: false }]
+        view.blocks.clear()
+        view.update({ items: [...items, ...committed], partial: undefined, progress: undefined, stats: {
           ...stats, inputTokens: stats.inputTokens + number(usage.inputTokens),
           outputTokens: stats.outputTokens + number(usage.outputTokens),
           cacheReadTokens: stats.cacheReadTokens + number(usage.cacheReadTokens),
@@ -374,11 +431,12 @@ function showEvent(view: ReturnType<typeof createView>, event: TerminalSessionEv
           ttftMs: stats.ttftMs + (observed ? Math.max(0, number(first?.time0) - start) : 0),
           ttftSteps: stats.ttftSteps + Number(observed),
         } })
+        return
       }
-      if (event.type === 'user/message' && record(data.source).kind !== 'user') return
+      if (record(data.source).kind !== 'user') return
       const text = messageText(data.content ?? data.message ?? data.text ?? data.parts)
       if (text === '') return
-      item = event.type === 'user/message' ? { kind: 'user', text } : { kind: 'assistant', text, streaming: false }
+      item = { kind: 'user', text }
       break
     }
     case 'tool/call':
@@ -394,7 +452,10 @@ function showEvent(view: ReturnType<typeof createView>, event: TerminalSessionEv
       }
       const exists = items.some(row => row.kind === 'tool' && row.callId === activity.key)
       const next = exists ? items.map(row => row.kind === 'tool' && row.callId === activity.key ? card : row) : [...items, card]
-      view.update({ items: next, stats: { ...stats, toolMs: stats.toolMs + (activity.durationMs ?? 0) } })
+      if (activity.state === 'running') view.activeTools.add(activity.key)
+      else view.activeTools.delete(activity.key)
+      view.update({ items: next, progress: view.activeTools.size > 0 ? 'tools' : undefined,
+        stats: { ...stats, toolMs: stats.toolMs + (activity.durationMs ?? 0) } })
       return
     }
     case 'goal/change':
@@ -441,6 +502,7 @@ export async function runTerminal(args: readonly string[], patches: readonly str
   let follow: AbortController | undefined
   let consuming: Promise<void> | undefined
   let historyBefore: number | undefined
+  let usageWindowed = false
   let detachApprovals: (() => void) | undefined
   let openPermissions: (() => Promise<void>) | undefined
   let cancelOperation: (() => void) | undefined
@@ -556,6 +618,7 @@ export async function runTerminal(args: readonly string[], patches: readonly str
       current = attached
       historyBefore = undefined
       let lastSeq = -1
+      let attempt: { id: string; nextIndex: number } | undefined
       const display = (event: TerminalSessionEvent): void => {
         if (event.seq <= lastSeq) return
         lastSeq = event.seq
@@ -566,17 +629,48 @@ export async function runTerminal(args: readonly string[], patches: readonly str
       pendingToolTargets.clear()
       view.activity.clear()
       view.modelSteps.clear()
+      view.activeTools.clear()
+      view.blocks.clear()
+      view.lastModel = undefined
       view.update({
         sessionId: attached.sessionId, project: attached.workspace.title, cwd: attached.cwd,
         permission: state.permissions?.currentValue ?? '', mode: state.agentPreset ?? session.agentPreset,
-        items: [], stats: INITIAL_VIEW.stats, busy: false, inputLocked: false,
+        items: [], stats: INITIAL_VIEW.stats, busy: false, inputLocked: false, progress: undefined, partial: undefined,
       })
       consuming = (async () => {
-        for await (const frame of remote.session.follow({ address: { kind: 'session', sessionId: session.sessionId }, activate: true }, streamSignal)) {
+        for await (const frame of remote.session.follow({
+          address: { kind: 'session', sessionId: session.sessionId }, activate: true, assistantStream: true,
+        }, streamSignal)) {
           if (streamSignal.aborted) break
           if (frame.type === 'snapshot') {
             historyBefore = frame.hasMore ? frame.records[0]?.event.seq : undefined
+            usageWindowed = frame.hasMore
             for (const entry of frame.records) display(entry.event)
+            const opening = frame.assistantStream?.activeAttempt
+            if (opening !== undefined) {
+              attempt = { id: opening.attemptId, nextIndex: opening.nextIndex }
+              view.blocks.clear()
+              for (const member of activeHost.expandAssistantStream(opening.stream)) appendAssistantChunk(view, record(member.chunk))
+              publishAssistant(view)
+            }
+          } else if (frame.type === 'assistant-stream') {
+            const live = frame.frame
+            if (live.type === 'start') {
+              attempt = { id: live.attemptId, nextIndex: 0 }
+              view.blocks.clear()
+              view.update({ busy: true, progress: 'thinking', partial: undefined })
+            } else if (attempt?.id === live.attemptId) {
+              if (live.type === 'chunk' && live.index === attempt.nextIndex) {
+                attempt.nextIndex += 1
+                if (appendAssistantChunk(view, record(live.chunk))) publishAssistant(view)
+              } else {
+                attempt = undefined
+                if (live.type === 'chunk' || live.outcome.kind === 'abandoned') {
+                  view.blocks.clear()
+                  view.update({ partial: undefined, progress: undefined })
+                }
+              }
+            }
           } else if (frame.type === 'event') {
             const { type, data } = frame.event
             const fields = record(data)
@@ -767,10 +861,26 @@ export async function runTerminal(args: readonly string[], patches: readonly str
         if (action === '/exit' || action === '/quit') break
         switch (action) {
           case '/help':
+            view.notice('/session [query]  /usage  /status  /ps  ·  Ctrl+T opens the transcript  ·  $ finds Skills')
             view.notice('/sessions [query]  /resume [id]  /new  /workspace  /cd [path]  /history  /fork  /rename  /archive  /unarchive  /pin  /unpin  /agent  /agents  /team  /permission  /mcp  /plugins  /clear  /exit')
             view.notice('/files [list|view|search]  /attach [path|clear]  /diff [file-number [page]]  /export <output.md|output.zip>')
             view.notice('/worktree  /browser')
             view.notice('/jobs [id|follow|stop|detach]  /schedule [create|pause|resume|run|history]  /terminal [new|list|close|id]')
+            break
+          case '/usage':
+            view.notice(`Session usage${usageWindowed ? ' · recent history and live turns' : ''}\n${statsSummary(view.getSnapshot())}`)
+            break
+          case '/status': {
+            const state = view.getSnapshot()
+            const phase = state.progress === 'thinking' ? 'thinking' : state.progress === 'responding' ? 'responding'
+              : state.progress === 'tools' ? 'running tools' : state.busy ? 'working' : 'idle'
+            view.notice([`Session ${session.sessionId} · ${phase}`, `Workspace ${session.workspace.title}`, `Directory ${session.cwd}`,
+              `Agent ${state.mode ?? 'default'} · Permission ${state.permission}`,
+              `Last request model ${view.lastModel ?? '(none yet)'}`].join('\n'))
+            break
+          }
+          case '/ps':
+            view.notice(await automation.processes(session.sessionId))
             break
           case '/jobs':
             view.notice(await automation.jobs(session.sessionId, arg ?? ''))
@@ -895,6 +1005,7 @@ export async function runTerminal(args: readonly string[], patches: readonly str
               `List ${resourceAction} on MCP server ${JSON.stringify(server.id)} using ${tool}. Summarize the available names and URIs.`)
             break
           }
+          case '/session':
           case '/sessions':
           case '/resume': {
             const id = action === '/resume' && arg

@@ -43,15 +43,17 @@ function StyledText({ run }: { run: StyledRun }) {
  * styled line list sized to the terminal rows, so the newest items stay on
  * screen and the input stays pinned at the bottom.
  * @param view - the current view state.
+ * @param details - expand the reasoning and tool rows in transcript mode.
  */
-export function ScrollRegion({ view }: { view: CliViewState }) {
+export function ScrollRegion({ view, details = false }: { view: CliViewState; details?: boolean }) {
   const { stdout } = useStdout()
   const width = stdout.columns && stdout.columns > 0 ? stdout.columns : 80
   const rows = stdout.rows && stdout.rows > 0 ? stdout.rows : 24
-  const height = Math.max(MIN_HEIGHT, rows - FIXED_ROWS)
+  const height = Math.max(MIN_HEIGHT, rows - (details ? 2 : FIXED_ROWS))
+  const items = React.useMemo(() => view.partial === undefined ? view.items : [...view.items, ...view.partial], [view.items, view.partial])
 
   // Track which tool rows are expanded; Ctrl+O toggles all.
-  const groups = foldRows(view.items).filter(row => row.tools !== undefined).length
+  const groups = React.useMemo(() => foldRows(view.items).filter(row => row.tools !== undefined).length, [view.items])
   const [expanded, setExpanded] = React.useState<boolean[]>([])
   React.useEffect(() => {
     setExpanded((prev) => {
@@ -60,7 +62,7 @@ export function ScrollRegion({ view }: { view: CliViewState }) {
     })
   }, [groups])
 
-  const lines = React.useMemo(() => layoutItems(view.items, width, expanded), [view.items, width, expanded])
+  const lines = React.useMemo(() => layoutItems(items, width, expanded, details), [items, width, expanded, details])
   const total = lines.length
   const maxOffset = Math.max(0, total - height)
 

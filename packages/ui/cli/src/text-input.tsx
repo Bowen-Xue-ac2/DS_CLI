@@ -206,6 +206,10 @@ export function CliTextInput({
         const match = findTrigger(valueRef.current, offsetRef.current)
         if (match === undefined) return
         const suffix = valueRef.current.slice(match.end)
+        if (key.return && picked.kind === 'command') {
+          onSubmit(applyCompletion(valueRef.current, match, picked.insert).trim())
+          return
+        }
         const spacer = /^\s/u.test(suffix) ? '' : ' '
         const next = applyCompletion(valueRef.current, match, picked.insert + spacer)
         const nextOffset = match.start + picked.insert.length + spacer.length
@@ -215,7 +219,7 @@ export function CliTextInput({
         offsetRef.current = nextOffset
         onChange(next)
         setOffset(nextOffset)
-        onCompletion?.(picked)
+        if (picked.kind !== 'command') onCompletion?.(picked)
         return
       }
     }

@@ -52,6 +52,7 @@ export function CliApp({
 }: CliAppProps) {
   const view = useCliView(store)
   const [drafts, setDrafts] = React.useState<ReadonlyMap<string, CliSubmission>>(() => new Map())
+  const [transcript, setTranscript] = React.useState(false)
   const draft = drafts.get(view.sessionId)
   const input = draft?.text ?? ''
   React.useEffect(() => {
@@ -80,6 +81,11 @@ export function CliApp({
   useInput((inputChar, key) => {
     // Keep Ink's raw input active while the prompt hands the keyboard to a menu.
     if (menu !== undefined) return
+    if ((key.ctrl && inputChar === 't') || (transcript && key.escape)) {
+      if (view.sessionId !== '') setTranscript(open => !open)
+      return
+    }
+    if (transcript) return
     // Shift+Tab cycles the permission preset.
     if (key.shift && key.tab) {
       onCyclePermission?.()
@@ -96,6 +102,13 @@ export function CliApp({
   })
   if (menu !== undefined) return <StartMenu key={menu.id} menu={menu.content} onClose={menu.finish} />
   if (view.inputLocked === true && view.sessionId === '') return <InkText>Connecting to DSH Host…</InkText>
+  if (transcript) return (
+    <Box flexDirection="column">
+      <InkText bold>Transcript</InkText>
+      <ScrollRegion key="transcript" view={view} details />
+      <InkText dimColor>PgUp / PgDn to scroll · Ctrl+T or Esc to return</InkText>
+    </Box>
+  )
   return (
     <Box flexDirection="column">
       {view.project === undefined ? null : (
@@ -139,7 +152,10 @@ export function CliApp({
         </Box>
       </Box>
       <ModeBadge view={view} />
-      <PermissionBadge view={view} />
+      <Box flexDirection="row">
+        <PermissionBadge view={view} />
+        <InkText dimColor>  ·  Ctrl+T transcript</InkText>
+      </Box>
     </Box>
   )
 }

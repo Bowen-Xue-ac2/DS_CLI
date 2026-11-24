@@ -9,6 +9,7 @@
 export type CliViewItem =
   | { kind: 'user'; text: string }
   | { kind: 'assistant'; text: string; streaming: boolean }
+  | { kind: 'reasoning'; text: string; streaming: boolean }
   | {
     kind: 'tool'
     name: string
@@ -49,6 +50,10 @@ export interface CliViewState {
   readonly items: readonly CliViewItem[]
   /** Whether an agent turn is in flight. */
   readonly busy: boolean
+  /** Current stage of the attached turn. */
+  readonly progress?: 'thinking' | 'responding' | 'tools' | undefined
+  /** Uncommitted provider output for the current model step. */
+  readonly partial?: readonly CliViewItem[] | undefined
   /** The live session id this view belongs to. */
   readonly sessionId: string
   /** Whole-session statistics for the status line. */

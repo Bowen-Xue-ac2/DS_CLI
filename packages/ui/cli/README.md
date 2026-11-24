@@ -4,7 +4,7 @@ English | [中文](README.zh.md)
 
 The dsh interactive terminal renderer. An [ink](https://github.com/vadimdemedes/ink) application over the REPL view store: a scroll region, a bottom input bar, tool cards, a status bar, and the terminal-side approval / user-question providers. It owns the terminal view contract (`CliViewItem` / `CliViewState`) so the driver in [`@deepseek-ai/dsh-cli`](../../bundle/cli/README.md) depends on the renderer's contract, not the reverse.
 
-The renderer is a pure projection of the view store to terminal frames: the driver writes `session/event` folds into the store and the ink tree subscribes with `useSyncExternalStore`. The renderer itself holds no agent or session handles; it renders whatever the store exposes and forwards input lines to the driver.
+The driver projects Host events into the view store and Ink subscribes with `useSyncExternalStore`. In-progress model output is displayed separately from committed transcript rows. Transcript mode expands provider reasoning and tool details while keeping the current draft. The renderer holds no Agent or Session handles.
 
 ## Model Experience
 

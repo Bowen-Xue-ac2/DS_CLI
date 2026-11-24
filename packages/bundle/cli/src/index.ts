@@ -262,6 +262,7 @@ function renderPlain(item: CliViewItem): string {
     case 'assistant': return item.text
     case 'tool': return `[90m[${item.name}] ${item.state === 'running' ? '…' : item.state === 'error' ? `✗ ${item.error ?? ''}` : '✓'}[0m`
     case 'notice': return `[90m${item.text}[0m`
+    case 'reasoning':
     case 'divider': return ''
   }
 }

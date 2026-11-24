@@ -27,6 +27,40 @@ export type TerminalSubmission =
   | { readonly kind: 'host-command'; readonly command: TerminalCommandDescriptor; readonly text: string }
   | { readonly kind: 'prompt'; readonly text: string }
 
+// The first seven rows are visible for a bare slash. Other commands are one prefix away.
+const SHORTCUTS = [
+  ['session', 'Open a saved session'], ['usage', 'Show token and timing totals for this session'],
+  ['status', 'Show workspace, model, permissions and progress'], ['ps', 'List active jobs and shells'],
+  ['model', 'Choose a model and reasoning effort'], ['permission', 'Change permissions'],
+  ['help', 'Show commands and keyboard shortcuts'],
+  ['activity', 'Inspect tool calls'], ['agent', 'Choose the main Agent'], ['agents', 'Inspect delegated work'],
+  ['archive', 'Archive this session'], ['attach', 'Attach a file to the next message'],
+  ['browser', 'Open this session in the browser'], ['cd', 'Change the tool working directory'],
+  ['clear', 'Clear the terminal transcript view'], ['commands', 'List Host commands'],
+  ['connectors', 'Manage MCP servers'], ['diff', 'Show the latest workspace changes'],
+  ['exit', 'Disconnect this terminal'], ['export', 'Export this conversation'], ['files', 'Browse workspace files'],
+  ['fork', 'Branch this conversation'], ['history', 'Load older messages'], ['jobs', 'Read or manage background jobs'],
+  ['mcp', 'Manage MCP servers'], ['mode', 'Choose the main Agent'], ['new', 'Start a new conversation'],
+  ['pin', 'Pin this session'], ['plugins', 'Manage Host plugins'], ['questions', 'Answer a pending question'],
+  ['quit', 'Disconnect this terminal'], ['rename', 'Rename this session'],
+  ['resume', 'Open a saved session by ID'], ['schedule', 'Manage scheduled messages'],
+  ['sessions', 'Find saved sessions'], ['team', 'View or configure the Agent team'],
+  ['terminal', 'Open or reconnect a persistent shell'], ['unarchive', 'Restore this session'],
+  ['unpin', 'Unpin this session'], ['workspace', 'Choose a workspace'], ['worktree', 'Manage the session worktree'],
+] as const
+
+/** Commands implemented by the terminal rather than the Host command dispatcher. */
+export const LOCAL_COMMANDS: ReadonlySet<string> = new Set(SHORTCUTS.map(([name]) => name))
+
+/**
+ * Return short, local slash commands for the current query.
+ * @param query - characters typed after the slash.
+ * @returns the featured commands for an empty query, or matching local commands.
+ */
+export function terminalShortcuts(query: string): readonly (readonly [string, string])[] {
+  return query === '' ? SHORTCUTS.slice(0, 7) : SHORTCUTS.filter(([name]) => name.startsWith(query))
+}
+
 /**
  * Route typed input by its explicit choice and the current session directory.
  * @param input - draft text and any skill the user picked.

@@ -49,8 +49,13 @@ it.runIf(process.platform === 'win32')('follows native Job byte offsets and runs
     const id = pty.output(mark).match(/(?:pwsh|bash)-[a-f0-9-]+(?= · running)/iu)?.[0]
     expect(id).toBeDefined()
     mark = pty.mark()
+    pty.send('/ps\r')
+    await pty.until(`Job ${id} · running`, mark)
+    mark = pty.mark()
     pty.send('/new\r')
     await pty.until('No messages yet', mark)
+    pty.send('/ps\r')
+    await pty.until('No active background jobs or shells in this session', mark)
     pty.send(`/jobs stop ${id}\r`)
     await pty.until('Job is unavailable in this session', mark)
     await pty.until(`❯ /jobs stop ${id}`, mark)
@@ -160,6 +165,9 @@ it.runIf(process.platform === 'win32')('detaches and rejoins an official persist
     await pty.until('Detached from shell', mark)
     const id = pty.output(mark).match(/Detached from shell ([a-f0-9-]{36})/iu)?.[1]
     expect(id).toBeDefined()
+    mark = pty.mark()
+    pty.send('/ps\r')
+    await pty.until(`Shell ${id} · running`, mark)
     pty.hangup()
     await pty.exit()
     pty = launch('bash.exe', cwd, env, `--resume ${sessionId}`, 'shared')
