@@ -4,7 +4,7 @@
 
 English · [简体中文](README.zh.md)
 
-**A coding agent in your terminal, with sessions you can pick up after closing the window.** DS_CLI builds on DeepSeek Harness `0.2.2-rc.5`. Start in a project, choose what the agent can do, and reconnect to the same conversation, jobs, or shell from PowerShell or Git Bash.
+**harness in cli** DS_CLI builds on DeepSeek Harness `0.2.2-rc.5`. Start in a project, choose what the agent can do, and reconnect to the same conversation, jobs, or shell from PowerShell or Git Bash.
 
 [Quick start](#quick-start) · [Everyday commands](#everyday-commands) · [Learn more](#learn-more)
 
