@@ -4,7 +4,7 @@
 
 [English](README.md) · 简体中文
 
-**在终端里使用编码 Agent，关掉窗口后还可以接着做。** DS_CLI 基于 DeepSeek Harness `0.2.2-rc.5`。在项目中启动，选好 Agent 和权限，就能从 PowerShell 或 Git Bash 接回同一条会话、后台任务或 Shell。
+DS_CLI 基于 DeepSeek Harness `0.2.2-rc.5`。在项目中启动，选好 Agent 和权限，就能从 PowerShell 或 Git Bash 接回同一条会话、后台任务或 Shell。
 
 [快速开始](#quick-start) · [常用操作](#everyday-commands) · [文档](#learn-more)
 
