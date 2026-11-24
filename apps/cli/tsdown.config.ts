@@ -20,7 +20,11 @@ function buildRevision(): string | null {
  * Declarations come from `tsc -b` (dts: false), matching every package.
  */
 export default defineConfig({
-  entry: ['lib/types/bin.js', 'lib/types/terminal-host.js', 'lib/types/terminal-start.js', 'lib/types/terminal-cwd.js', 'lib/types/terminal-permissions.js', 'lib/types/terminal-sessions.js'],
+  entry: [
+    'lib/types/bin.js', 'lib/types/terminal-host.js', 'lib/types/terminal-start.js', 'lib/types/terminal-cwd.js',
+    'lib/types/terminal-permissions.js', 'lib/types/terminal-sessions.js', 'lib/types/terminal-connector-catalog.js',
+    'lib/types/terminal-supervisor-main.js', 'lib/types/terminal-host-stop-hook.js',
+  ],
   outDir: 'lib',
   format: ['esm'],
   platform: 'node',

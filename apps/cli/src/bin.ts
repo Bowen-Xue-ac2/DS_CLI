@@ -73,6 +73,23 @@ switch (invocation.mode) {
     }))
     break
   }
+  case 'host': {
+    try {
+      if (invocation.action === 'open') {
+        const { openTerminalBrowser, requestTerminalBrowser } = await import('./terminal-browser.ts')
+        const url = await requestTerminalBrowser(invocation.session)
+        if (invocation.printUrl) console.log(url.href)
+        else await openTerminalBrowser(url)
+      } else {
+        const { runTerminalHostCommand } = await import('./terminal-supervisor.ts')
+        await runTerminalHostCommand(invocation.action, invocation.yes)
+      }
+    } catch (error) {
+      console.error(`dsh: ${error instanceof Error ? error.message : String(error)}`)
+      process.exitCode = 1
+    }
+    break
+  }
   default:
     invocation satisfies never
     throw new Error(`dsh: unhandled invocation mode ${JSON.stringify(invocation)}`)

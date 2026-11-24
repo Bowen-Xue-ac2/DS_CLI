@@ -4,7 +4,7 @@
  */
 import { randomUUID } from 'node:crypto'
 import { realpath, stat } from 'node:fs/promises'
-import { dirname, resolve } from 'node:path'
+import { dirname, relative, resolve } from 'node:path'
 import { Command, CommanderError } from 'commander'
 import {
   createInteractiveIo, type CliSubmission, type CliViewItem, type CliViewState, type InteractiveIo,
@@ -20,13 +20,27 @@ import {
 } from './terminal-start.ts'
 import { permissionCatalog, permissionRevision, setDefaultPermission, setSessionPermission } from './terminal-permissions.ts'
 import { listTerminalSessions, loadTerminalSession } from './terminal-sessions.ts'
-import { terminalCompletions, terminalComposerScope } from './terminal-composer.ts'
+import { terminalCompletions, terminalComposerScope, validateTerminalReferences } from './terminal-composer.ts'
 import { resolveTerminalSubmission } from './terminal-commands.ts'
-import { runMcpCommand } from './terminal-connectors.ts'
+import { listTerminalConnectors, prepareConnectorPrompt, runMcpCommand } from './terminal-connectors.ts'
+import { TerminalMcpResources } from './terminal-mcp-resources.ts'
+import { runTerminalAgents, runTerminalTeam } from './terminal-delegation.ts'
+import { runTerminalPlugins } from './terminal-plugins.ts'
+import { ensureTerminalHost } from './terminal-supervisor.ts'
+import { applyTerminalActivity, type TerminalActivityItem } from './terminal-activity.ts'
+import { answerContinuedQuestion, answerTerminalQuestions, chooseTerminalModel } from './terminal-interactions.ts'
+import { TerminalAssets } from './terminal-assets.ts'
+import { TerminalAutomation } from './terminal-automation.ts'
+import { openTerminalBrowser, requestTerminalBrowser } from './terminal-browser.ts'
+import { preparePluginReferences } from './terminal-plugin-catalog.ts'
+import { runTerminalWorktree } from './terminal-worktrees.ts'
 
 const LOCAL_COMMANDS = new Set([
   'help', 'commands', 'sessions', 'resume', 'new', 'history', 'fork', 'rename', 'archive', 'unarchive',
-  'pin', 'unpin', 'clear', 'workspace', 'cd', 'agent', 'mode', 'permission', 'mcp', 'connectors', 'exit', 'quit',
+  'pin', 'unpin', 'clear', 'workspace', 'cd', 'agent', 'agents', 'team', 'mode', 'permission',
+  'activity', 'model', 'questions', 'mcp', 'connectors', 'plugins', 'exit', 'quit',
+  'files', 'attach', 'diff', 'export', 'browser', 'worktree',
+  'jobs', 'schedule', 'terminal',
 ])
 
 const INITIAL_VIEW: CliViewState = {
@@ -43,6 +57,8 @@ function createView() {
     for (const listener of listeners) listener()
   }
   return {
+    activity: new Map<string, TerminalActivityItem>(),
+    modelSteps: new Map<string, number>(),
     getSnapshot: () => state,
     subscribe(listener: () => void) {
       listeners.add(listener)
@@ -59,6 +75,7 @@ interface TerminalFlags {
   choose?: boolean
   permission?: string
   resume?: string | true
+  foregroundHost?: boolean
 }
 
 function parseTerminalFlags(args: readonly string[]): TerminalFlags | undefined {
@@ -70,6 +87,7 @@ function parseTerminalFlags(args: readonly string[]): TerminalFlags | undefined 
     .option('-m, --mode <preset>', 'primary Agent preset')
     .option('--permission <preset>', 'permission preset for this session')
     .option('--resume [session]', 'resume the latest or a named session')
+    .option('--foreground-host', 'start an isolated Host that ends with the terminal')
     .option('--verbose', 'show additional diagnostics when the Host reports an error')
     .addHelpText('after', '\nExamples:\n  dsh cli --resume               resume the latest session in the workspace\n  dsh cli --mode code            start with the code Agent preset\n')
     .exitOverride()
@@ -316,37 +334,84 @@ function showEvent(view: ReturnType<typeof createView>, event: TerminalSessionEv
   const { items, stats } = view.getSnapshot()
   const data = record(event.data)
   let item: CliViewItem | undefined
+  const stepKey = JSON.stringify([data.turn, data.step])
   switch (event.type) {
     case 'turn/start':
       view.update({ busy: true })
       return
-    case 'turn/end':
+    case 'turn/end': {
       view.update({ busy: false, stats: { ...stats, turns: stats.turns + 1 } })
+      const reason = record(data.reason)
+      if (reason.kind === 'aborted') view.notice('Turn cancelled')
+      if (reason.kind === 'error') {
+        const failure = record(reason.error)
+        const detail = [failure.code, failure.message].filter(value => typeof value === 'string' && value.length > 0).join(' · ')
+        view.notice(detail === '' ? 'Turn failed' : `Turn failed · ${detail}`)
+      }
+      return
+    }
+    case 'step/start':
+      if (event.time !== undefined) view.modelSteps.set(stepKey, event.time)
       return
     case 'step/end':
+      view.modelSteps.delete(stepKey)
       view.update({ stats: { ...stats, steps: stats.steps + 1 } })
       return
     case 'user/message':
     case 'assistant/message': {
+      if (event.type === 'assistant/message') {
+        const usage = record(data.usage)
+        const number = (value: unknown): number => typeof value === 'number' && Number.isFinite(value) ? value : 0
+        const start = view.modelSteps.get(stepKey)
+        const first = Array.isArray(data.stream) ? data.stream.map(record)
+          .find(chunk => chunk.type === 'text-chunks' || chunk.type === 'reasoning-chunks' || chunk.type === 'tool-call-chunks') : undefined
+        const observed = start !== undefined && typeof first?.time0 === 'number'
+        view.update({ stats: {
+          ...stats, inputTokens: stats.inputTokens + number(usage.inputTokens),
+          outputTokens: stats.outputTokens + number(usage.outputTokens),
+          cacheReadTokens: stats.cacheReadTokens + number(usage.cacheReadTokens),
+          llmMs: stats.llmMs + (start === undefined || event.time === undefined ? 0 : Math.max(0, event.time - start)),
+          ttftMs: stats.ttftMs + (observed ? Math.max(0, number(first?.time0) - start) : 0),
+          ttftSteps: stats.ttftSteps + Number(observed),
+        } })
+      }
       if (event.type === 'user/message' && record(data.source).kind !== 'user') return
       const text = messageText(data.content ?? data.message ?? data.text ?? data.parts)
       if (text === '') return
       item = event.type === 'user/message' ? { kind: 'user', text } : { kind: 'assistant', text, streaming: false }
       break
     }
-    case 'tool/call': {
-      const { callId, name } = data
-      if (typeof callId !== 'string' || typeof name !== 'string') return
-      item = { kind: 'tool', callId, name, state: 'running' }
-      break
-    }
+    case 'tool/call':
     case 'tool/result': {
-      const result = record(data.message)
-      const callId = result.toolCallId
-      const state = result.isError === true ? 'error' : 'done'
-      view.update({ items: items.map(item => item.kind === 'tool' && item.callId === callId ? { ...item, state } : item) })
+      const activity = applyTerminalActivity(view.activity, event)
+      if (activity === undefined) return
+      const card: CliViewItem = {
+        kind: 'tool', callId: activity.key, name: activity.name,
+        state: activity.state === 'succeeded' ? 'done' : activity.state === 'failed' ? 'error' : activity.state,
+        ...(activity.diagnostic === undefined ? {} : { error: activity.diagnostic }),
+        ...(activity.durationMs === undefined ? {} : { durationMs: activity.durationMs }),
+        ...(activity.output === undefined ? {} : { output: activity.output }),
+      }
+      const exists = items.some(row => row.kind === 'tool' && row.callId === activity.key)
+      const next = exists ? items.map(row => row.kind === 'tool' && row.callId === activity.key ? card : row) : [...items, card]
+      view.update({ items: next, stats: { ...stats, toolMs: stats.toolMs + (activity.durationMs ?? 0) } })
       return
     }
+    case 'goal/change':
+      if (typeof data.operation === 'string') view.notice(`Goal · ${data.operation}`)
+      return
+    case 'compaction/end':
+      view.notice(typeof data.error === 'string' ? 'Context compaction failed' : 'Context compacted')
+      return
+    case 'tool-workflow/run-start':
+      view.notice(`Workflow ${String(data.name ?? data.runId ?? '')} · started`)
+      return
+    case 'tool-workflow/run-end':
+      view.notice(`Workflow ${String(data.runId ?? '')} · ${String(data.stopReason ?? 'ended')}`)
+      return
+    case 'workspace/changes':
+      view.notice(`Workspace changes · turn ${String(data.turn ?? '')} · /diff`)
+      return
     default:
       return
   }
@@ -378,7 +443,9 @@ export async function runTerminal(args: readonly string[], patches: readonly str
   let historyBefore: number | undefined
   let detachApprovals: (() => void) | undefined
   let openPermissions: (() => Promise<void>) | undefined
+  let cancelOperation: (() => void) | undefined
   const pendingToolTargets = new Map<string, string>()
+  const mcpResources = new TerminalMcpResources()
   const unacknowledged = new Map<string, { text: string; requestId: string }>()
   const presetAttempts = new Map<string, {
     draft: string
@@ -391,31 +458,52 @@ export async function runTerminal(args: readonly string[], patches: readonly str
   const io = createInteractiveIo({
     view,
     async completion(match, signal) {
-      return host === undefined || current === undefined ? [] : terminalCompletions(host, current, match, signal)
+      return host === undefined || current === undefined ? [] : terminalCompletions(host, current, match, mcpResources, signal)
     },
     onCancel() {
+      if (cancelOperation !== undefined) { cancelOperation(); return }
       if (current !== undefined && host !== undefined) {
         void host.remote.session.cancel({ sessionId: current.sessionId })
           .then(requireHostResult).catch(error => view.notice(message(error)))
       }
     },
-    onExit() { controller.abort() },
+    onExit() {
+      if (cancelOperation !== undefined) cancelOperation()
+      else controller.abort()
+    },
     onCyclePermission() { void openPermissions?.().catch(error => view.notice(message(error))) },
   })
   try {
-    const activeHost = await openTerminalHost({ cwd: callerCwd, signal: controller.signal, patchFiles: patches })
+    const open = flags.foregroundHost === true ? openTerminalHost : ensureTerminalHost
+    const activeHost = await open({ cwd: callerCwd, signal: controller.signal, patchFiles: patches })
     host = activeHost
     activeHost.signal.addEventListener('abort', () => io.dispose(), { once: true })
     const { remote, signal } = activeHost
+    const assets = new TerminalAssets(activeHost)
+    const automation = new TerminalAutomation(activeHost, io, view.notice)
     detachApprovals = activeHost.answerApprovals(
       () => approvalTarget ?? current?.sessionId,
       request => answerApproval(io, request, request.callId === undefined ? undefined : pendingToolTargets.get(request.callId)),
+      (items, lifetime) => answerTerminalQuestions(io, items, lifetime),
     )
 
     async function projection(sessionId: string) {
       const result = requireHostResult(await remote.session.projections({ sessionId }, signal))
       if (result === null || result.kind === 'migration-required') throw new Error('Session state is unavailable')
       return result.values
+    }
+
+    async function enqueuePrompt(sessionId: string, text: string, withAttachments = false): Promise<void> {
+      const attachments = withAttachments ? assets.pending(sessionId).map(item => item.part) : []
+      const identity = JSON.stringify([text, ...attachments])
+      const open = unacknowledged.get(sessionId)
+      const requestId = open?.text === identity ? open.requestId : randomUUID()
+      unacknowledged.set(sessionId, { text: identity, requestId })
+      requireHostResult(await remote.session.prompt({
+        sessionId, requestId, mode: 'queue', content: [{ type: 'text', text }, ...attachments],
+      }, signal))
+      unacknowledged.delete(sessionId)
+      if (withAttachments) assets.clear(sessionId)
     }
 
     async function selectPermissions(arg?: string): Promise<void> {
@@ -459,21 +547,27 @@ export async function runTerminal(args: readonly string[], patches: readonly str
 
     async function attach(session: TerminalActiveSession): Promise<void> {
       const state = await projection(session.sessionId)
+      automation.detach()
       follow?.abort()
       await consuming
       follow = new AbortController()
       const streamSignal = AbortSignal.any([signal, follow.signal])
-      current = session
+      const attached = state.workingDirectory ? { ...session, cwd: state.workingDirectory } : session
+      current = attached
       historyBefore = undefined
       let lastSeq = -1
       const display = (event: TerminalSessionEvent): void => {
         if (event.seq <= lastSeq) return
         lastSeq = event.seq
+        mcpResources.observe(session.sessionId, event)
+        assets.observe(session.sessionId, event)
         showEvent(view, event)
       }
       pendingToolTargets.clear()
+      view.activity.clear()
+      view.modelSteps.clear()
       view.update({
-        sessionId: session.sessionId, project: session.workspace.title, cwd: session.cwd,
+        sessionId: attached.sessionId, project: attached.workspace.title, cwd: attached.cwd,
         permission: state.permissions?.currentValue ?? '', mode: state.agentPreset ?? session.agentPreset,
         items: [], stats: INITIAL_VIEW.stats, busy: false, inputLocked: false,
       })
@@ -486,6 +580,10 @@ export async function runTerminal(args: readonly string[], patches: readonly str
           } else if (frame.type === 'event') {
             const { type, data } = frame.event
             const fields = record(data)
+            if (type === 'working-directory/change' && typeof fields.cwd === 'string' && current?.sessionId === session.sessionId) {
+              current = { ...current, cwd: fields.cwd }
+              view.update({ cwd: fields.cwd })
+            }
             if (type === 'tool/call' && typeof fields.callId === 'string') {
               const target = toolTarget(fields.arguments)
               if (target !== undefined) pendingToolTargets.set(fields.callId, target)
@@ -516,6 +614,15 @@ export async function runTerminal(args: readonly string[], patches: readonly str
     async function sendToPreset(draft: CliSubmission, source: TerminalActiveSession): Promise<boolean> {
       const selected = draft.selections.filter(item => item.kind === 'agent')
       if (selected.length === 0) return false
+      if (assets.pending(source.sessionId).length > 0) {
+        throw new Error('Open the target Agent session before attaching files to it.')
+      }
+      if (draft.selections.some(item => item.kind === 'connector')) {
+        throw new Error('Open the target Agent session, then pick its MCP connector.')
+      }
+      if (draft.selections.some(item => item.kind === 'plugin')) {
+        throw new Error('Open the target Agent session, then pick its plugin contributions.')
+      }
       const choice = selected[0]
       const mentions = [...draft.text.matchAll(/\S+/gu)].filter(match => match[0].startsWith('@agent:'))
       const mention = mentions[0]
@@ -564,17 +671,7 @@ export async function runTerminal(args: readonly string[], patches: readonly str
         || state.agentPreset !== preset.id || state.permissions?.currentValue !== pending.permission) {
         throw new Error(`Agent session ${target.sessionId} changed. Check its workspace, directory and permissions before sending.`)
       }
-      for (const item of draft.selections) {
-        if (item.kind === 'file' || item.kind === 'session') {
-          const candidates = await terminalCompletions(activeHost, target, {
-            trigger: '@', query: item.id, start: 0, end: 0,
-          }, signal)
-          if (!candidates.some(candidate => candidate.kind === item.kind && candidate.id === item.id)) {
-            throw new Error(`Reference is unavailable in the target session: ${item.label}`)
-          }
-        }
-        if (item.kind === 'connector') throw new Error('Pick the Connector from the target session before sending')
-      }
+      await validateTerminalReferences(activeHost, target, draft.selections, signal)
       const skill = draft.selections.find(item => item.kind === 'skill')
       const skills = skill !== undefined || /^[/$][a-z0-9]/u.test(text)
         ? requireHostResult(await remote.skills.list({ sessionId: target.sessionId }, signal)).skills
@@ -654,15 +751,12 @@ export async function runTerminal(args: readonly string[], patches: readonly str
           local: LOCAL_COMMANDS,
         })
         if (routed.kind === 'prompt') {
-          const open = unacknowledged.get(session.sessionId)
-          const requestId = open?.text === routed.text ? open.requestId : randomUUID()
-          unacknowledged.set(session.sessionId, { text: routed.text, requestId })
-          const request = {
-            sessionId: session.sessionId, requestId, mode: 'queue' as const,
-            content: [{ type: 'text' as const, text: routed.text }],
-          }
-          requireHostResult(await remote.session.prompt(request, signal))
-          unacknowledged.delete(session.sessionId)
+          const [text] = await Promise.all([
+            prepareConnectorPrompt(activeHost, session.sessionId, routed.text, submission.selections, mcpResources, signal),
+            validateTerminalReferences(activeHost, session, submission.selections, signal),
+          ])
+          const prepared = await preparePluginReferences(activeHost, session.sessionId, text, submission.selections, signal)
+          await enqueuePrompt(session.sessionId, prepared, true)
           continue
         }
         if (routed.kind === 'host-command') {
@@ -673,12 +767,134 @@ export async function runTerminal(args: readonly string[], patches: readonly str
         if (action === '/exit' || action === '/quit') break
         switch (action) {
           case '/help':
-            view.notice('/sessions [query]  /resume [id]  /new  /workspace  /cd [path]  /history  /fork  /rename  /archive  /unarchive  /pin  /unpin  /agent  /permission  /mcp  /clear  /exit')
+            view.notice('/sessions [query]  /resume [id]  /new  /workspace  /cd [path]  /history  /fork  /rename  /archive  /unarchive  /pin  /unpin  /agent  /agents  /team  /permission  /mcp  /plugins  /clear  /exit')
+            view.notice('/files [list|view|search]  /attach [path|clear]  /diff [file-number [page]]  /export <output.md|output.zip>')
+            view.notice('/worktree  /browser')
+            view.notice('/jobs [id|follow|stop|detach]  /schedule [create|pause|resume|run|history]  /terminal [new|list|close|id]')
             break
+          case '/jobs':
+            view.notice(await automation.jobs(session.sessionId, arg ?? ''))
+            break
+          case '/schedule':
+            view.notice(await automation.schedule(session.sessionId, arg ?? ''))
+            break
+          case '/terminal':
+            view.notice(await automation.terminal(session.sessionId, arg ?? ''))
+            break
+          case '/files': {
+            const result = await assets.files(session, io, arg ?? '', signal)
+            if (result === undefined) break
+            if ('notice' in result) {
+              view.notice(result.notice)
+              break
+            }
+            const path = relative(session.cwd, result.path).replaceAll('\\', '/')
+            const mention = '@' + (/\s|"/u.test(path) ? JSON.stringify(path) : path)
+            io.restoreSubmission({
+              text: mention + ' ', sessionId: session.sessionId,
+              selections: [{ id: path, kind: 'file', pathKind: result.kind, scope: terminalComposerScope(session), label: path, insert: mention }],
+            })
+            break
+          }
+          case '/attach': {
+            if (arg === undefined) {
+              const pending = assets.pending(session.sessionId)
+              view.notice(pending.length ? pending.map(item => item.name).join('\n') : 'Usage: /attach <workspace path>')
+              break
+            }
+            const upload = new AbortController()
+            cancelOperation = () => { upload.abort(new Error('Attachment cancelled')) }
+            view.update({ inputLocked: true })
+            try {
+              view.notice(await assets.attach(session, arg, AbortSignal.any([signal, upload.signal]), view.notice))
+            } finally {
+              cancelOperation = undefined
+              view.update({ inputLocked: false })
+            }
+            break
+          }
+          case '/diff':
+            view.notice(await assets.diff(session.sessionId, arg ?? ''))
+            break
+          case '/export':
+            view.notice(await assets.export(session, arg ?? ''))
+            break
+          case '/worktree':
+            view.notice(await runTerminalWorktree(activeHost, io, session, await projection(session.sessionId), arg ?? ''))
+            break
+          case '/browser':
+            if (flags.foregroundHost) throw new Error('Browser handoff requires the shared Host. Restart dsh without --foreground-host.')
+            await openTerminalBrowser(await requestTerminalBrowser(session.sessionId))
+            view.notice(`Opened browser handoff for ${session.sessionId}`)
+            break
+          case '/plugins':
+            view.notice(await runTerminalPlugins(activeHost, io, {
+              notice: view.notice,
+              trackInstall(cancel) {
+                cancelOperation = cancel
+                view.update({ inputLocked: true })
+                return () => {
+                  cancelOperation = undefined
+                  view.update({ inputLocked: false })
+                }
+              },
+            }, session.cwd, arg))
+            break
+          case '/team':
+            view.notice(await runTerminalTeam(activeHost, session.sessionId, arg))
+            break
+          case '/model':
+            view.notice(await chooseTerminalModel(activeHost, io, session.sessionId, arg))
+            break
+          case '/questions':
+            view.notice(await answerContinuedQuestion(activeHost, io, session.sessionId))
+            break
+          case '/activity': {
+            const rows = [...view.activity.values()]
+            const id = (row: TerminalActivityItem): string => `${row.callId}@${row.turn}.${row.step}`
+            const [selected, pageText, extra] = arg?.trim().split(/\s+/u) ?? []
+            if (selected === undefined) {
+              view.notice(rows.length === 0 ? 'No tool activity in the current view.' : rows.slice(-24).map(row =>
+                `${id(row)} · ${row.name} · ${row.state}${row.durationMs === undefined ? '' : ` · ${row.durationMs} ms`}`).join('\n'))
+              break
+            }
+            const matches = rows.filter(row => id(row) === selected || row.callId === selected)
+            const entry = matches[0]
+            const page = Number(pageText ?? '1')
+            if (extra !== undefined || !Number.isSafeInteger(page) || page < 1) { view.notice('Usage: /activity [call-id [page]]'); break }
+            if (entry === undefined || matches.length !== 1) { view.notice('Choose a unique call from /activity'); break }
+            const full = [entry.arguments, entry.output].filter(Boolean).join('\n\n')
+            const pages = Math.max(1, Math.ceil(full.length / 1600))
+            if (page > pages) { view.notice(`This call has ${pages} page(s)`); break }
+            view.notice(`${entry.name} · ${entry.state} · ${page}/${pages}\n${full.slice((page - 1) * 1600, page * 1600)}`)
+            break
+          }
+          case '/agents': {
+            const result = await runTerminalAgents(activeHost, io, session.sessionId, arg, unacknowledged)
+            view.notice(result.text)
+            if (result.history !== undefined) {
+              const history = createView()
+              for (const event of result.history) showEvent(history, event)
+              view.update({ items: [...view.getSnapshot().items, ...history.getSnapshot().items] })
+            }
+            break
+          }
           case '/mcp':
-          case '/connectors':
-            view.notice(await runMcpCommand(activeHost, io, arg))
+          case '/connectors': {
+            const [, resourceAction, serverId] = /^(resources|templates)\s+(\S+)$/u.exec(arg ?? '') ?? []
+            if (serverId === undefined) {
+              view.notice(await runMcpCommand(activeHost, io, arg, session.cwd))
+              break
+            }
+            const servers = await listTerminalConnectors(activeHost, session.sessionId, signal)
+            const server = servers.find(row => row.id === serverId && row.resources)
+            if (server === undefined) throw new Error('MCP resource tools are unavailable for that connector in this session.')
+            if (resourceAction === 'resources') mcpResources.begin(session.sessionId, server)
+            const tool = resourceAction === 'templates' ? 'list_mcp_resource_templates' : 'list_mcp_resources'
+            await enqueuePrompt(session.sessionId,
+              `List ${resourceAction} on MCP server ${JSON.stringify(server.id)} using ${tool}. Summarize the available names and URIs.`)
             break
+          }
           case '/sessions':
           case '/resume': {
             const id = action === '/resume' && arg

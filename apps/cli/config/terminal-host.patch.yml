@@ -1,14 +1,18 @@
 - id: directory-picker
   disabled: true
-# The terminal has no workspace diff view. The web recorder can hold the first
-# tool behind a Git snapshot while the rest of the Host is ready.
 - id: workspace-changes
-  disabled: true
-# This Web view requires workspaceChanges and would keep the Host pending.
-- id: ui-deliverables
-  disabled: true
+  config:
+    timeoutMs: 2500
+    outputMaxBytes: 1048576
+    maxFiles: 150
+    maxFileBytes: 1048576
+    diffTimeoutMs: 100
 - insert:
     - id: terminal-directory-picker
       name: '@deepseek-ai/dsh-host-directory-picker-browse'
     - id: ds-cli-cwd
       name: ../lib/terminal-cwd.js
+    - id: ds-cli-connector-catalog
+      name: ../lib/terminal-connector-catalog.js
+    - id: ds-cli-browser-handoff
+      name: ./browser-handoff/index.js

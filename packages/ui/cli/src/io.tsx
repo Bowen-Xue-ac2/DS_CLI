@@ -5,6 +5,7 @@
  */
 
 import * as React from 'react'
+import { setImmediate } from 'node:timers/promises'
 import { render } from 'ink'
 import { CliApp, type CliAppProps, type CliSubmission } from './app.tsx'
 import type { CliCompletionSource } from './completion.ts'
@@ -20,6 +21,8 @@ export interface InteractiveIo {
   restoreSubmission(submission: CliSubmission): void
   /** @param menu - temporary keyboard choices. @param signal - caller lifetime. @returns values or cancellation. */
   choose(menu: CliMenu, signal?: AbortSignal): Promise<CliMenuResult>
+  /** Yield the physical terminal while one Host Shell attachment owns its input and output. */
+  withTerminal(operation: () => Promise<void>): Promise<void>
   dispose(): void
 }
 
@@ -83,7 +86,8 @@ export function createInteractiveIo(options: InteractiveIoOptions): InteractiveI
   // terminal: the input bar stays pinned at the bottom and the mouse wheel
   // scrolls inside the ink UI instead of the terminal's own history. Only on a
   // real TTY — piped/CI output must not be polluted with screen-switch codes.
-  if (process.stdout.isTTY) {
+  function enterTerminal(): void {
+    if (!process.stdout.isTTY || enteredAltScreen) return
     process.stdout.write('\x1b[?1049h')
     enteredAltScreen = true
     // SGR mouse mode so the wheel arrives as `\x1b[<64/65;…M` events that the
@@ -94,8 +98,9 @@ export function createInteractiveIo(options: InteractiveIoOptions): InteractiveI
     // Fallback for abnormal exits (signals, uncaught errors) that bypass the
     // normal dispose path: `exit` fires on every process exit. Node only allows
     // synchronous work here, and a plain write is exactly that.
-    process.on('exit', restoreTerminal)
   }
+  enterTerminal()
+  if (process.stdout.isTTY) process.on('exit', restoreTerminal)
   let activeMenu: CliAppProps['menu']
   let menuId = 0
   function element() {
@@ -115,6 +120,7 @@ export function createInteractiveIo(options: InteractiveIoOptions): InteractiveI
     )
   }
   const instance = render(element(), { exitOnCtrlC: false })
+  let terminalOpen = false
   // ink arms raw mode when the input hook mounts; re-arm explicitly so the
   // first keypress after a watch-restart is parsed as a key, not a raw escape
   // sequence (otherwise an early Up becomes the literal "^[[A").
@@ -133,10 +139,10 @@ export function createInteractiveIo(options: InteractiveIoOptions): InteractiveI
     nextSubmission,
     restoreSubmission(submission) {
       restore = submission
-      if (!disposed) instance.rerender(element())
+      if (!disposed && !terminalOpen) instance.rerender(element())
     },
     choose: (content, signal) => {
-      if (disposed || signal?.aborted) return Promise.resolve({ kind: 'cancel' })
+      if (disposed || terminalOpen || signal?.aborted) return Promise.resolve({ kind: 'cancel' })
       if (activeMenu !== undefined) return Promise.reject(new Error('A terminal selection is already open'))
       return new Promise<CliMenuResult>((resolve) => {
         const abort = (): void => { activeMenu?.finish({ kind: 'cancel' }) }
@@ -156,12 +162,38 @@ export function createInteractiveIo(options: InteractiveIoOptions): InteractiveI
         instance.rerender(element())
       })
     },
+    async withTerminal(operation) {
+      if (!process.stdin.isTTY || !process.stdout.isTTY || disposed || terminalOpen || activeMenu !== undefined) {
+        throw new Error('A persistent shell needs an interactive terminal with no open menu')
+      }
+      terminalOpen = true
+      instance.clear()
+      instance.rerender(<></>)
+      await setImmediate()
+      if (disposed) return
+      restoreTerminal()
+      try {
+        await operation()
+      } finally {
+        terminalOpen = false
+        if (!disposed) {
+          enterTerminal()
+          instance.clear()
+          instance.rerender(element())
+          await setImmediate()
+        }
+      }
+    },
     dispose: () => {
       if (disposed) return
       disposed = true
       activeMenu?.finish({ kind: 'cancel' })
       resolveNext(null)
       instance.unmount()
+      if (process.stdin.isTTY) {
+        process.stdin.pause()
+        process.stdin.unref()
+      }
       restoreTerminal()
       if (process.stdout.isTTY) process.off('exit', restoreTerminal)
     },

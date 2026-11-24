@@ -54,6 +54,8 @@ dsh cli --resume session-xxxx
 
 输入 `@agent:` 查找已配置的 Agent 预设。选中预设并写好请求后，确认工作目录和权限再发送。请求会在新会话执行，原会话仍可通过 `/sessions` 打开。
 
+输入 `@connector:` 查找当前 Agent 可用的 MCP 连接器。选中并发送请求后，Agent 可按当前权限使用其工具。用 `/mcp resources <server>` 发现资源，再输入 `@connector:<server>/` 选择本会话发现的结果。连接发生变化后，请重新选择连接器或列出资源。
+
 | 命令 | 作用 |
 | --- | --- |
 | `/exit` | 退出 CLI |
@@ -66,16 +68,32 @@ dsh cli --resume session-xxxx
 | `/rename <title>`、`/archive`、`/unarchive`、`/pin`、`/unpin` | 通过 Host 整理会话 |
 | `/cd [path]` | 修改当前会话的活动目录 |
 | `/agent` 或 `/mode` | 在发送首条消息前选择主 Agent |
-| `/model <model>` | 切换本会话的模型 |
+| `/model [provider/model [effort]]` | 查看模型目录，或切换本会话的模型与推理档 |
 | `/permission` 或 **Shift+Tab** | 设置当前会话权限或未来新会话默认值 |
 | `/mcp` 或 `/connectors` | 查看 Host 管理的连接状态 |
 | `/mcp probe <server>`、`/mcp restart <server>` | 探测已配置的服务器，或确认后重启连接 |
+| `/mcp configure <server> <json-file>` | 按 Host 配置结构保存 stdio 或 streamable HTTP 服务器 |
+| `/mcp enable <server>`、`/mcp disable <server>` | 确认启停已配置的服务器 |
+| `/agents`、`/agents history [child]` | 查看本根会话的子 Agent，或打开子会话历史 |
+| `/agents send <child> <message>`、`/agents stop <child>` | 续聊支持后续消息的子 Agent，或确认停止 |
+| `/team [on\|off]` | 查看共享任务并切换当前会话的团队模式 |
+| `/activity [call-id [page]]`、`/questions` | 查看工具执行过程，回答当前会话待处理的问题 |
+| `/plugins [inspect\|install\|discover]` | 浏览 Host 插件目录、检查包和确认修改 |
+| `/files [list\|search\|view]`、`/attach <path>` | 浏览工作区文件、为下一条消息添加文件或图片，或用 `/attach clear` 清除 |
+| `/diff [file-number [page]]`、`/export <output.md\|output.zip>` | 查看 Host 最近一次改动摘要，或将会话导出到新文件 |
+| `/jobs [id]`、`/jobs follow <id> [byte]`、`/jobs stop <id>` | 查看后台输出、从指定字节继续读取，或确认停止 |
+| `/schedule [create\|pause\|resume\|run\|history]` | 管理 Host 定时任务。`/schedule create every 600` 打开预填 600 秒间隔的表单 |
+| `/terminal [new\|list\|close\|id]` | 打开或重新连接 Host Shell。输入 `~.` 即可返回聊天 |
+| `/worktree` | 查看 Forge 的工作树、源仓库及当前 Host 权限。用 `/browser` 进入审阅控制 |
+| `/browser` | 在本机 Host 的 Web 界面打开当前会话 |
 
 工具请求审批时，可以拒绝或允许一次。启用完全访问时会弹出独立确认。
 
 agent 运行中按 **Ctrl+C** 取消当前回合；在提示符下按则退出。
 
 ## 配置交互式 Host
+
+`/exit` 断开当前终端。共享 Host 保留会话和可继续运行的后台工作。用 `dsh host status` 查状态，`dsh host open --session <id>` 在浏览器打开指定会话，`dsh host stop` 显式停机。使用不同的 `--patch` 组合前，先停止当前 Host。
 
 交互式 Host 在 `$DSH_HOME/ds-cli-host-0.2` 读取配置，并保存工作区和会话。模型密钥也可以从启动终端继承的环境变量中读取。指定 `--resume` 会话 ID 时，从该 Host 恢复会话。
 

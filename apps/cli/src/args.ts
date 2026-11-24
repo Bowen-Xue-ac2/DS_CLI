@@ -46,6 +46,8 @@ interface PluginInvocation {
 
 /** The resolved `dsh` invocation. Help, version, and errors exit inside {@link parseDshArgs}. */
 export type DshInvocation = ProfileInvocation | DumpConfigInvocation | PluginInvocation | { mode: 'build-info' }
+  | { mode: 'host'; action: 'status' | 'stop'; yes: boolean }
+  | { mode: 'host'; action: 'open'; session?: string; printUrl: boolean }
 
 /** Launcher flags shared by the default command and the `web` alias. */
 interface BootOptions {
@@ -63,7 +65,7 @@ const collect = (value: string, previous: string[] = []): string[] => [...previo
 
 const CLI_START_OPTIONS = new Set([
   '--choose', '--cwd', '--mode', '-m', '--permission', '--resume', '--no-interactive',
-  '--model', '--provider', '--verbose',
+  '--model', '--provider', '--verbose', '--foreground-host',
 ])
 
 /** The launcher's own help text; each app prints its own. */
@@ -75,6 +77,7 @@ Examples:
   dsh --profile cli                          start an interactive terminal session (same as: dsh cli)
   dsh --profile cli --resume fresh           start a brand-new session
   dsh --profile web --help                   the web app's own flags and help
+  dsh host status                            show the shared terminal Host state
   dsh plugin --profile cli add <package>     install a plugin into the cli profile
 `
 
@@ -206,6 +209,26 @@ export function parseDshArgs(argv: readonly string[], version: string): DshInvoc
     .action((args: string[], options: BootOptions) => {
       rejectParentOptions('cli')
       resolved = resolveBoot(cli, 'cli', options, args)
+    })
+
+  program.command('host').description('inspect, stop or open the shared terminal Host')
+    .argument('<action>', 'status, stop or open')
+    .option('--yes', 'confirm a stop from a noninteractive terminal')
+    .option('--session <id>', 'Session to open in the browser')
+    .option('--print-url', 'print the one-time browser handoff URL')
+    .action((action: string, options: { yes?: boolean; session?: string; printUrl?: boolean }) => {
+      rejectParentOptions('host')
+      if (action !== 'stop' && options.yes === true) program.error('error: --yes is only valid with dsh host stop')
+      if (action === 'open') {
+        resolved = { mode: 'host', action, printUrl: options.printUrl === true,
+          ...(options.session === undefined ? {} : { session: options.session }) }
+        return
+      }
+      if (action !== 'status' && action !== 'stop') return program.error('error: choose dsh host status, dsh host stop or dsh host open')
+      if (options.session !== undefined || options.printUrl === true) {
+        program.error('error: --session and --print-url are only valid with dsh host open')
+      }
+      resolved = { mode: 'host', action, yes: options.yes === true }
     })
 
   const plugin = program.command('plugin').description('manage a profile\'s plugins by forwarding the remaining arguments to pnpm in the profile directory')

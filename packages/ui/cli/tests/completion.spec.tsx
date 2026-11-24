@@ -19,4 +19,12 @@ describe('terminal input completion', () => {
     expect(findTrigger('/rev', 4)?.trigger).toBe('/')
     expect(findTrigger('$rev', 4)?.trigger).toBe('$')
   })
+
+  it('keeps Unicode path characters and the remaining pasted lines', () => {
+    const draft = 'Read it\n@中文\u200b旧.txt\nThen summarize.'
+    const match = findTrigger(draft, draft.indexOf('旧'))
+    expect(match).toEqual({ trigger: '@', start: 8, end: draft.indexOf('\nThen'), query: '中文\u200b' })
+    if (match === undefined) throw new Error('Completion range was missing')
+    expect(applyCompletion(draft, match, '@"中文 新.txt"')).toBe('Read it\n@"中文 新.txt"\nThen summarize.')
+  })
 })

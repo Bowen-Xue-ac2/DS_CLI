@@ -15,6 +15,7 @@ export interface CliMenuOption {
 export type CliMenuField =
   | { readonly label: string; readonly initial: string; readonly options: readonly CliMenuOption[] }
   | { readonly label: string; readonly initial: string; readonly path: true }
+  | { readonly label: string; readonly initial: string; readonly text: true }
 
 /** Terminal menu content provided by the caller. */
 export interface CliMenu {

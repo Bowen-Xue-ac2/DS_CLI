@@ -54,6 +54,8 @@ Type `/` to search for Skills available in the current session. Use the arrow ke
 
 Type `@agent:` to find configured Agent presets. Select a preset, add your request, and review the work directory and permission before sending. The request starts in a new session, and you can return to the original conversation with `/sessions`.
 
+Type `@connector:` to find connected MCP servers available to this Agent. Select a connector and send your request to let the Agent use its tools with the current permissions. Use `/mcp resources <server>` to discover resources, then type `@connector:<server>/` to select a result in this session. If the connection changes, select the connector or list its resources again.
+
 | Command | Effect |
 | --- | --- |
 | `/exit` | Exit the CLI |
@@ -66,16 +68,32 @@ Type `@agent:` to find configured Agent presets. Select a preset, add your reque
 | `/rename <title>`, `/archive`, `/unarchive`, `/pin`, `/unpin` | Organize conversations through the Host |
 | `/cd [path]` | Change the active working directory within the session |
 | `/agent` or `/mode` | Choose the primary Agent before sending a message |
-| `/model <model>` | Switch the model for this session |
+| `/model [provider/model [effort]]` | Inspect the model catalog or change this session's model and reasoning effort |
 | `/permission` or **Shift+Tab** | Choose a current preset or a default for future sessions |
 | `/mcp` or `/connectors` | View managed Host connections |
 | `/mcp probe <server>`, `/mcp restart <server>` | Probe a configured server or confirm a live connection restart |
+| `/mcp configure <server> <json-file>` | Save a stdio or streamable HTTP server using the Host settings schema |
+| `/mcp enable <server>`, `/mcp disable <server>` | Confirm a change to a configured server's enabled state |
+| `/agents`, `/agents history [child]` | List delegated Agents under this root or open a child's history |
+| `/agents send <child> <message>`, `/agents stop <child>` | Continue a resumable child or confirm a stop request |
+| `/team [on\|off]` | Inspect shared tasks and change Team mode for this session |
+| `/activity [call-id [page]]`, `/questions` | Inspect tool calls and answer a pending question in this session |
+| `/plugins [inspect\|install\|discover]` | Browse the Host plugin catalog, inspect a package and confirm changes |
+| `/files [list\|search\|view]`, `/attach <path>` | Browse workspace files, add a file or image to the next message, or use `/attach clear` |
+| `/diff [file-number [page]]`, `/export <output.md\|output.zip>` | Read the latest Host change summary or export the session to a new file |
+| `/jobs [id]`, `/jobs follow <id> [byte]`, `/jobs stop <id>` | Read background output, continue at a byte offset, or confirm a stop |
+| `/schedule [create\|pause\|resume\|run\|history]` | Manage Host reminders. `/schedule create every 600` starts the form with a 600-second interval |
+| `/terminal [new\|list\|close\|id]` | Open or reattach to a Host shell. Type `~.` to return to chat |
+| `/worktree` | Read the Forge worktree, source repository and current Host permissions. Use `/browser` for review controls |
+| `/browser` | Open the active session in the local Host's web UI |
 
 The approval menu offers **Deny** and **Allow once** for the requesting tool. Full access requires an explicit confirmation.
 
 **Ctrl+C** cancels the in-flight turn while the agent runs, and exits at the prompt.
 
 ## Configure the interactive Host
+
+`/exit` detaches the terminal. The shared Host keeps the session and eligible background work running. Run `dsh host status` to inspect it, `dsh host open --session <id>` to open a specific session in the browser, and `dsh host stop` to explicitly stop it. A different `--patch` set takes effect after stopping the current Host.
 
 The interactive Host reads settings and stores workspaces and sessions under `$DSH_HOME/ds-cli-host-0.2`. It can also read API keys from the environment inherited from the invoking shell. A named `--resume` restores a session from this Host.
 

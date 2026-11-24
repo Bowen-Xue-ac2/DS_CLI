@@ -2,7 +2,7 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 /** Give the pinned Host a local OpenAI-compatible test route in its temporary home. */
-export async function terminalFixtureEnv(home: string, endpoint: string, key: string): Promise<Record<string, string>> {
+export async function terminalFixtureEnv(home: string, endpoint: string, key: string, imageInput = false): Promise<Record<string, string>> {
   const runtimeHome = join(home, 'ds-cli-host-0.2')
   await mkdir(runtimeHome, { recursive: true })
   await writeFile(join(runtimeHome, 'cordis.patch.yml'), JSON.stringify([
@@ -14,7 +14,7 @@ export async function terminalFixtureEnv(home: string, endpoint: string, key: st
             api: 'openai-completions',
             apiKeyEnv: 'DS_CLI_FIXTURE_KEY',
             baseURL: endpoint,
-            models: [{ id: 'fixture-model' }],
+            models: [{ id: 'fixture-model', ...(imageInput ? { input: ['text', 'image'] } : {}) }],
           },
         },
       },

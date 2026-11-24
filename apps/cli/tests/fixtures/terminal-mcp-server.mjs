@@ -10,10 +10,28 @@ for await (const line of createInterface({ input: process.stdin })) {
     response.result = {
       protocolVersion: request.params.protocolVersion,
       serverInfo: { name: 'cli-mcp-fixture', version: '1' },
-      capabilities: { tools: {} },
+      capabilities: { tools: {}, resources: {} },
     }
   } else if (request.method === 'tools/list') {
-    response.result = { tools: [{ name: 'fixture_status', inputSchema: { type: 'object' } }] }
+    response.result = { tools: [{
+      name: 'fixture_status',
+      description: 'Return a fixed status from the fixture',
+      inputSchema: { type: 'object' },
+      annotations: { readOnlyHint: true },
+    }] }
+  } else if (request.method === 'tools/call' && request.params.name === 'fixture_status') {
+    await appendFile(process.argv[2], 'called\n')
+    response.result = { content: [{ type: 'text', text: 'MCP_FIXTURE_STATUS' }] }
+  } else if (request.method === 'resources/list') {
+    await appendFile(process.argv[2], 'resources-listed\n')
+    response.result = { resources: [{ uri: 'fixture://local/readme', name: 'Fixture readme', mimeType: 'text/plain' }] }
+  } else if (request.method === 'resources/templates/list') {
+    response.result = { resourceTemplates: [] }
+  } else if (request.method === 'resources/read' && request.params.uri === 'fixture://local/readme') {
+    await appendFile(process.argv[2], 'resource-read\n')
+    response.result = {
+      contents: [{ uri: 'fixture://local/readme', mimeType: 'text/plain', text: 'MCP_RESOURCE_SENTINEL' }],
+    }
   } else {
     response.error = { code: -32601, message: 'Method not found' }
   }

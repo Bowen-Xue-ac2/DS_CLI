@@ -76,6 +76,7 @@ export function applyKeypress(
     return value.trim() !== '' ? { submit: value, offset: 0 } : {}
   }
   if (key.escape || (key.ctrl && rawInput === 'c')) return {}
+  if (key.ctrl && rawInput === 'u') return { value: '', offset: 0 }
   if (key.leftArrow) return { offset: Math.max(0, offset - 1) }
   if (key.rightArrow) return { offset: Math.min(value.length, offset + 1) }
   if (key.upArrow) {
@@ -130,6 +131,8 @@ export interface CliTextInputProps {
   completionScope?: string
   /** Remember the selected identity separately from its editable text. */
   onCompletion?(this: void, item: CliCompletionItem): void
+  /** Identity of a rejected submission restored into an empty input. */
+  restoreCursor?: object
 }
 
 /**
@@ -137,7 +140,7 @@ export interface CliTextInputProps {
  * @param props - value/onChange plus history and submit callbacks.
  */
 export function CliTextInput({
-  value, onChange, onSubmit, onHistoryUp, onHistoryDown, focus = true, completion, completionScope, onCompletion,
+  value, onChange, onSubmit, onHistoryUp, onHistoryDown, focus = true, completion, completionScope, onCompletion, restoreCursor,
 }: CliTextInputProps) {
   const [offset, setOffset] = React.useState(value.length)
   const [menu, setMenu] = React.useState<{
@@ -146,15 +149,15 @@ export function CliTextInput({
     error?: string
   }>()
   const [selected, setSelected] = React.useState(0)
-  const dismissed = React.useRef<string | undefined>(undefined)
+  const [dismissed, setDismissed] = React.useState<string>()
   const menuKey = JSON.stringify([completionScope, value, offset])
-  const active = focus && menu?.key === menuKey && dismissed.current !== menuKey ? menu : undefined
+  const active = focus && menu?.key === menuKey && dismissed !== menuKey ? menu : undefined
   const selectable = active?.items.filter(item => !item.disabled) ?? []
   const picked = selectable[selected]
   const first = Math.max(0, (picked === undefined || active === undefined ? 0 : active.items.indexOf(picked)) - 4)
   React.useEffect(() => {
     const match = focus && findTrigger(value, offset)
-    if (!match || completion === undefined || dismissed.current === menuKey) return
+    if (!match || completion === undefined || dismissed === menuKey) return
     const controller = new AbortController()
     void completion(match, controller.signal).then((items) => {
       if (controller.signal.aborted) return
@@ -165,7 +168,7 @@ export function CliTextInput({
       setMenu({ key: menuKey, items: [], error: error instanceof Error ? error.message : String(error) })
     })
     return () => controller.abort()
-  }, [completion, focus, menuKey, offset, value])
+  }, [completion, dismissed, focus, menuKey, offset, value])
   // Clamp the cursor when the value shrinks externally (e.g. submit clears the
   // input), but never force it back to the end: the user's own edits drive the
   // offset through applyKeypress and must keep the cursor where they put it.
@@ -176,17 +179,25 @@ export function CliTextInput({
   // against the latest state instead of a stale render closure.
   const valueRef = React.useRef(value)
   const offsetRef = React.useRef(offset)
+  const focused = React.useRef(focus)
+  React.useLayoutEffect(() => { focused.current = focus }, [focus])
   React.useEffect(() => { valueRef.current = value })
   React.useEffect(() => { offsetRef.current = offset })
+  React.useLayoutEffect(() => {
+    if (restoreCursor === undefined) return
+    offsetRef.current = value.length
+    setOffset(value.length)
+  }, [restoreCursor, value])
 
   useInput((rawInput, key) => {
+    if (!focused.current) return
     const liveKey = JSON.stringify([completionScope, valueRef.current, offsetRef.current])
+    if (key.escape && completion !== undefined && findTrigger(valueRef.current, offsetRef.current) !== undefined) {
+      setDismissed(liveKey)
+      setMenu(undefined)
+      return
+    }
     if (active !== undefined && liveKey === active.key) {
-      if (key.escape) {
-        dismissed.current = liveKey
-        setMenu(undefined)
-        return
-      }
       if ((key.upArrow || key.downArrow) && selectable.length > 0) {
         setSelected(index => (index + (key.upArrow ? selectable.length - 1 : 1)) % selectable.length)
         return
@@ -198,7 +209,7 @@ export function CliTextInput({
         const spacer = /^\s/u.test(suffix) ? '' : ' '
         const next = applyCompletion(valueRef.current, match, picked.insert + spacer)
         const nextOffset = match.start + picked.insert.length + spacer.length
-        dismissed.current = JSON.stringify([completionScope, next, nextOffset])
+        setDismissed(JSON.stringify([completionScope, next, nextOffset]))
         setMenu(undefined)
         valueRef.current = next
         offsetRef.current = nextOffset

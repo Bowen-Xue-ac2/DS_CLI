@@ -11,10 +11,13 @@ export interface TriggerMatch {
 /** A Host-backed choice with a stable identity, distinct from its text. */
 export interface CliCompletionItem {
   readonly id: string
-  readonly kind: 'skill' | 'file' | 'session' | 'agent' | 'connector'
+  readonly kind: 'skill' | 'file' | 'session' | 'agent' | 'connector' | 'plugin'
   readonly label: string
   readonly insert: string
   readonly scope: string
+  readonly connectionGeneration?: number
+  readonly connectorResource?: { readonly server: string; readonly uri: string }
+  readonly pathKind?: 'file' | 'directory'
   readonly detail?: string
   readonly disabled?: boolean
 }

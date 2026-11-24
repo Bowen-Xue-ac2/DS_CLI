@@ -33,12 +33,15 @@ function executable(name: string): string {
   return path
 }
 
-export function launch(shell: 'pwsh.exe' | 'bash.exe', cwd: string, vars: Record<string, string>, args = '') {
+export function launch(
+  shell: 'pwsh.exe' | 'bash.exe', cwd: string, vars: Record<string, string>, args = '', mode: 'foreground' | 'shared' = 'foreground',
+) {
   const { spawn } = requirePty('node-pty') as { spawn(path: string, args: string[], options: object): Pty }
+  const terminalArgs = (mode === 'foreground' ? '--foreground-host ' : '') + args
   const command = shell === 'pwsh.exe'
     ? ['-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command',
-      `Set-Location -LiteralPath $env:DS_CLI_CASE_DIR; (Get-Command dsh).Source; dsh ${args}`]
-    : ['--noprofile', '--norc', '-c', `cd -- "$DS_CLI_CASE_DIR" && command -v dsh && dsh ${args}`]
+      `Set-Location -LiteralPath $env:DS_CLI_CASE_DIR; (Get-Command dsh).Source; dsh ${terminalArgs}`]
+    : ['--noprofile', '--norc', '-c', `cd -- "$DS_CLI_CASE_DIR" && command -v dsh && dsh ${terminalArgs}`]
   const env = { ...vars, DS_CLI_CASE_DIR: cwd.replaceAll('\\', '/') }
   const pty = spawn(executable(shell), command, { cols: 162, rows: 40, cwd, env, name: 'xterm-256color' })
   let output = ''
@@ -50,12 +53,13 @@ export function launch(shell: 'pwsh.exe' | 'bash.exe', cwd: string, vars: Record
   return {
     output: (since = 0) => stripVTControlCharacters(output.slice(since)),
     mark: () => output.length,
-    until: async (text: string, since = 0) => {
+    until: async (text: string, since = 0, timeout = 18_000) => {
       await vi.waitFor(() => {
         expect(stripVTControlCharacters(output.slice(since)).slice(-5_000), `${shell} was waiting for ${text}`).toContain(text)
-      }, { timeout: 18_000, interval: 30 })
+      }, { timeout, interval: 30 })
     },
     send: (text: string) => { pty.write(text) },
+    hangup: () => { pty.kill() },
     exit: async () => {
       if (!closed) {
         const detached = AbortSignal.timeout(8_000)

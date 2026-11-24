@@ -1,6 +1,7 @@
 /** The status line and session stats formatting and rendering. */
 
 import * as React from 'react'
+import { Box } from 'ink'
 import { describe, expect, it } from 'vitest'
 import { render } from 'ink-testing-library'
 import { PermissionBadge, SessionStats, StatusBar, statsSummary, truncateToWidth } from '../src/status-bar.tsx'
@@ -43,6 +44,17 @@ describe('StatusBar', () => {
 })
 
 describe('SessionStats', () => {
+  it('keeps the full Session id visible next to a populated statistics strip', () => {
+    const sessionId = 'session-12345678-1111-2222-3333-123456789abc'
+    const data = view({ sessionId })
+    const { lastFrame } = render(<Box justifyContent="space-between">
+      <StatusBar view={data} />
+      <SessionStats view={data} />
+    </Box>)
+    expect(lastFrame()).toContain(sessionId)
+    expect(lastFrame()).toContain('LLM 2m8s')
+  })
+
   it('renders the leading figures and ellipsizes the tail at 100 columns', () => {
     const out = statsFrame({})
     expect(out).toContain('1 轮 · 34 步')

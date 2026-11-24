@@ -149,6 +149,13 @@ export interface MockLlmServerOptions {
   readonly toolName?: string
   /** Raw JSON arguments emitted by `tool_call_success`. */
   readonly toolArguments?: string
+  /** Optional tool calls keyed by their one-based request number. */
+  readonly toolCalls?: Readonly<Record<number, { readonly name: string; readonly arguments: string }>>
+  /** Pick a tool call or text by request content when parent and child turns may interleave. */
+  readonly responseForRequest?: (body: unknown) =>
+  { readonly tool: string; readonly arguments: string } | { readonly text: string } | undefined
+  /** Optional fixture latch after a request is recorded and before response output starts. */
+  readonly waitForResponse?: (request: MockLlmRequestRecord) => Promise<void>
   /** Optional observer for JSONL CLI telemetry; observer failures never affect wire behavior. */
   readonly onEvent?: (event: MockLlmServerEvent) => void
 }
@@ -186,6 +193,9 @@ interface ResolvedOptions {
   readonly requestId?: string
   readonly toolName: string
   readonly toolArguments: string
+  readonly toolCalls?: MockLlmServerOptions['toolCalls']
+  readonly responseForRequest?: MockLlmServerOptions['responseForRequest']
+  readonly waitForResponse?: MockLlmServerOptions['waitForResponse']
   readonly onEvent?: (event: MockLlmServerEvent) => void
 }
 
@@ -284,6 +294,9 @@ function resolveOptions(options: MockLlmServerOptions): ResolvedOptions {
     ...options.requestId === undefined ? {} : { requestId: options.requestId },
     toolName,
     toolArguments,
+    ...options.toolCalls === undefined ? {} : { toolCalls: options.toolCalls },
+    ...options.responseForRequest === undefined ? {} : { responseForRequest: options.responseForRequest },
+    ...options.waitForResponse === undefined ? {} : { waitForResponse: options.waitForResponse },
     ...options.onEvent === undefined ? {} : { onEvent: options.onEvent },
   }
 }
@@ -431,8 +444,8 @@ async function disconnect(
   response.destroy()
 }
 
-function toolCallChunks(options: ResolvedOptions): readonly unknown[] {
-  const midpoint = Math.max(1, Math.floor(options.toolArguments.length / 2))
+function toolCallChunks(name: string, args: string): readonly unknown[] {
+  const midpoint = Math.max(1, Math.floor(args.length / 2))
   return [
     {
       choices: [{
@@ -442,7 +455,7 @@ function toolCallChunks(options: ResolvedOptions): readonly unknown[] {
             index: 0,
             id: 'mock-call-1',
             type: 'function',
-            function: { name: options.toolName, arguments: options.toolArguments.slice(0, midpoint) },
+            function: { name, arguments: args.slice(0, midpoint) },
           }],
         },
         finish_reason: null,
@@ -451,7 +464,7 @@ function toolCallChunks(options: ResolvedOptions): readonly unknown[] {
     {
       choices: [{
         index: 0,
-        delta: { tool_calls: [{ index: 0, function: { arguments: options.toolArguments.slice(midpoint) } }] },
+        delta: { tool_calls: [{ index: 0, function: { arguments: args.slice(midpoint) } }] },
         finish_reason: null,
       }],
     },
@@ -571,7 +584,10 @@ async function runBehavior(
       return
     case 'tool_call_success':
       openSse(response)
-      for (const chunk of toolCallChunks(options)) writeSse(record, response, chunk)
+      for (const chunk of toolCallChunks(
+        options.toolCalls?.[record.attempt]?.name ?? options.toolName,
+        options.toolCalls?.[record.attempt]?.arguments ?? options.toolArguments,
+      )) writeSse(record, response, chunk)
       writeSse(record, response, terminalChunk('tool_calls', 2))
       writeDone(record, response)
       response.end()
@@ -671,7 +687,9 @@ export async function startMockLlmServer(options: MockLlmServerOptions): Promise
       return
     }
 
-    const selected = selectBehavior()
+    const override = resolved.responseForRequest?.(body)
+    const behavior = override === undefined ? undefined : 'tool' in override ? 'tool_call_success' : 'success'
+    const selected = behavior === undefined ? selectBehavior() : { scriptBehavior: behavior, behavior } as const
     const record: MockLlmRequestRecord = {
       attempt: requests.length + 1,
       scriptBehavior: selected.scriptBehavior,
@@ -694,7 +712,12 @@ export async function startMockLlmServer(options: MockLlmServerOptions): Promise
       behavior: record.behavior,
       path,
     })
-    await runBehavior(resolved, record, request, response)
+    await resolved.waitForResponse?.(record)
+    if (response.destroyed) return
+    const settings = override === undefined ? resolved : 'tool' in override
+      ? { ...resolved, toolCalls: { [record.attempt]: { name: override.tool, arguments: override.arguments } } }
+      : { ...resolved, successText: override.text }
+    await runBehavior(settings, record, request, response)
   }
 
   const server = createServer((request, response) => {

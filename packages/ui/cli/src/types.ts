@@ -9,7 +9,15 @@
 export type CliViewItem =
   | { kind: 'user'; text: string }
   | { kind: 'assistant'; text: string; streaming: boolean }
-  | { kind: 'tool'; name: string; callId: string; state: 'running' | 'done' | 'error'; error?: string }
+  | {
+    kind: 'tool'
+    name: string
+    callId: string
+    state: 'running' | 'done' | 'error' | 'cancelled'
+    error?: string
+    durationMs?: number
+    output?: string
+  }
   | { kind: 'notice'; text: string }
   | { kind: 'divider' }
 

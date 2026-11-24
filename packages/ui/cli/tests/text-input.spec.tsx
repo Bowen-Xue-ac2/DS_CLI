@@ -1,7 +1,10 @@
 /** The input keypress fold: coalesced Enter, backspace/delete, history, submit. */
 
-import { describe, expect, it } from 'vitest'
-import { applyKeypress } from '../src/text-input.tsx'
+import * as React from 'react'
+import { render } from 'ink-testing-library'
+import { describe, expect, it, vi } from 'vitest'
+import type { CliCompletionItem, CliCompletionSource } from '../src/completion.ts'
+import { applyKeypress, CliTextInput } from '../src/text-input.tsx'
 
 describe('applyKeypress', () => {
   it('submits on Enter when non-empty and ignores an empty value', () => {
@@ -42,6 +45,12 @@ describe('applyKeypress', () => {
     expect(applyKeypress('x', {}, 'ab', 1)).toEqual({ value: 'axb', offset: 2 })
   })
 
+  it('keeps a multiline paste in the draft until Enter', () => {
+    const paste = 'Open the file\nAnd summarize it.'
+    expect(applyKeypress(paste, {}, '', 0)).toEqual({ value: paste, offset: paste.length })
+    expect(applyKeypress('', { return: true }, paste, paste.length)).toEqual({ submit: paste, offset: 0 })
+  })
+
   it('ignores SGR mouse wheel events instead of inserting them', () => {
     // The scroll region consumes the wheel; the input must not insert the raw
     // escape sequence. ink strips the leading ESC, so the input is `[<…M`.
@@ -55,5 +64,67 @@ describe('applyKeypress', () => {
     expect(applyKeypress('[<', {}, 'ab', 1)).toEqual({})
     expect(applyKeypress('65;10;20M', {}, 'ab', 1)).toEqual({})
     expect(applyKeypress('10;20M', {}, 'ab', 1)).toEqual({})
+  })
+})
+
+function fileChoice(label: string, scope: string): readonly CliCompletionItem[] {
+  return [{ id: label, kind: 'file', label, insert: '@' + label, scope }]
+}
+
+describe('completion lifetime', () => {
+  it('cancels an in-flight lookup on Escape and preserves the draft', async () => {
+    const reply = Promise.withResolvers<readonly CliCompletionItem[]>()
+    const completion = vi.fn<CliCompletionSource>(() => reply.promise)
+    const submit = vi.fn()
+    const rendered = render(
+      <CliTextInput value="@draft" onChange={() => {}} onSubmit={submit} completion={completion} completionScope="a" />,
+    )
+    try {
+      await vi.waitFor(() => {
+        expect(completion).toHaveBeenCalledTimes(1)
+        expect(rendered.stdin.listenerCount('readable')).toBeGreaterThan(0)
+      })
+      const signal = completion.mock.calls[0]?.[1]
+      rendered.stdin.write('\x1b')
+      await vi.waitFor(() => { expect(signal?.aborted).toBe(true) })
+      reply.resolve(fileChoice('late-file', 'a'))
+      await reply.promise
+      expect(rendered.lastFrame()).toContain('@draft')
+      expect(rendered.lastFrame()).not.toContain('late-file')
+      expect(submit).not.toHaveBeenCalled()
+    } finally {
+      rendered.unmount()
+    }
+  })
+
+  it('discards a late result from the previous session while another menu owns input', async () => {
+    const old = Promise.withResolvers<readonly CliCompletionItem[]>()
+    const completion = vi.fn<CliCompletionSource>().mockReturnValueOnce(old.promise)
+      .mockResolvedValue(fileChoice('workspace-b', 'b'))
+    const submit = vi.fn()
+    const pick = vi.fn()
+    const input = (scope: string, focus: boolean) => (
+      <CliTextInput value="@workspace" onChange={() => {}} onSubmit={submit} completion={completion}
+        completionScope={scope} onCompletion={pick} focus={focus}
+      />
+    )
+    const rendered = render(input('a', true))
+    try {
+      await vi.waitFor(() => { expect(completion).toHaveBeenCalledTimes(1) })
+      rendered.rerender(input('b', true))
+      await vi.waitFor(() => { expect(rendered.lastFrame()).toContain('workspace-b') })
+      expect(completion.mock.calls[0]?.[1].aborted).toBe(true)
+      old.resolve(fileChoice('workspace-a', 'a'))
+      await old.promise
+      rendered.rerender(input('b', false))
+      await vi.waitFor(() => { expect(rendered.lastFrame()).not.toContain('workspace-b') })
+      expect(rendered.lastFrame()).not.toContain('workspace-a')
+      rendered.stdin.write('\t')
+      rendered.stdin.write('\r')
+      expect(pick).not.toHaveBeenCalled()
+      expect(submit).not.toHaveBeenCalled()
+    } finally {
+      rendered.unmount()
+    }
   })
 })

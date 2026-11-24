@@ -9,14 +9,8 @@
 
 import * as React from 'react'
 import { Box, Text, useStdout } from 'ink'
+import { textWidth, truncateToColumns } from './scroll-layout.ts'
 import type { CliViewState } from './types.ts'
-
-/**
- * Minimum columns reserved on the stats row for the `○ idle`/`● busy` + session
- * id head to the strip's left. The strip truncates rather than overlap that
- * head, which sits on the same line above the input bar.
- */
-const STATS_HEAD_WIDTH = 12
 
 /** Format a millisecond span compactly (`2m8s`, `1.2s`, `300ms`). */
 function fmtMs(ms: number): string {
@@ -37,28 +31,14 @@ function fmtTokens(n: number): string {
 }
 
 /**
- * Truncate a string to fit `max` display columns with a trailing `…`.
- * CJK and other wide glyphs count as two columns; content longer than `max`
- * returns a slice ending in `…` (the ellipsis replaces content, so the slice
- * plus the ellipsis stays within `max` on the wide glyph that overflows).
+ * Keep up to `max` columns of text, appending an ellipsis when truncated.
  * @param text - the text to cap.
  * @param max - the maximum display width in columns.
- * @returns text no wider than `max` columns.
+ * @returns the fitting prefix and a separate ellipsis when needed.
  */
 export function truncateToWidth(text: string, max: number): string {
   if (max <= 0 || text === '') return ''
-  let cols = 0
-  let i = 0
-  for (const ch of text) {
-    // Wide glyphs render as two terminal columns.
-    const w = /[\u1100-\u115f\u2e80-\ua4cf\uac00-\ud7a3\uf900-\ufaff\ufe30-\ufe4f\uff00-\uff60\uffe0-\uffe6]/u.test(ch) ? 2 : 1
-    if (cols + w > max) {
-      return i === text.length ? text : `${text.slice(0, i)}…`
-    }
-    cols += w
-    i += 1
-  }
-  return text
+  return textWidth(text) <= max ? text : truncateToColumns(text, max) + '…'
 }
 
 /**
@@ -81,8 +61,8 @@ export function statsSummary(view: CliViewState): string {
     `${stats.turns} 轮 · ${stats.steps} 步`,
     `LLM ${fmtMs(stats.llmMs)} · 工具调用 ${fmtMs(stats.toolMs)}`,
     `首 token 平均 ${ttft}`,
-    tokPerSec,
     cachePct !== '' ? `缓存命中 ${cachePct}` : '',
+    tokPerSec,
     `输入 ${fmtTokens(billedInput)} tok · 输出 ${fmtTokens(stats.outputTokens)} tok`,
   ].filter(segment => segment !== '')
   return segments.join(' | ')
@@ -116,10 +96,12 @@ export function SessionStats({ view }: { view: CliViewState }) {
   // Leave room for the idle/session head on the same line's left; the strip
   // itself takes the rest of the row and truncates only at the right edge.
   const columns = stdout.columns && stdout.columns > 0 ? stdout.columns : 80
-  const max = columns - STATS_HEAD_WIDTH
+  const max = columns - textWidth(`○ idle  ${view.sessionId}`) - 1
+  if (max <= 0) return null
+  const clipped = textWidth(summary) <= max ? summary : max === 1 ? '…' : truncateToWidth(summary, max - 1)
   return (
     <Box flexShrink={0} paddingLeft={1}>
-      <Text dimColor>{truncateToWidth(summary, max)}</Text>
+      <Text dimColor>{clipped}</Text>
     </Box>
   )
 }

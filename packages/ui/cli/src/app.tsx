@@ -88,7 +88,7 @@ export function CliApp({
     // Ctrl+C / Ctrl+D are handled here; printable input belongs to the
     // text input, which also owns the prompt focus.
     if (isCancelKey(inputChar, key)) {
-      if (view.busy) onCtrlC()
+      if (view.busy || (view.inputLocked === true && view.sessionId !== '')) onCtrlC()
       else onExit()
     } else if (isExitKey(inputChar, key)) {
       onExit()
@@ -129,6 +129,7 @@ export function CliApp({
               setInput('')
             }}
             focus={view.inputLocked !== true}
+            {...(restore !== undefined && draft === restore ? { restoreCursor: restore } : {})}
             {...(completion === undefined ? {} : {
               completion, completionScope: JSON.stringify([view.sessionId, view.cwd, view.mode]), onCompletion: rememberChoice,
             })}

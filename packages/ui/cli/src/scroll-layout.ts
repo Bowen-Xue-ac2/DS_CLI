@@ -168,6 +168,13 @@ export function wrapChars(chars: Char[], width: number): RenderLine[] {
     cols += w
   }
   for (const c of chars) {
+    if (c.ch === '\r') continue
+    if (c.ch === '\n') {
+      lines.push({ runs })
+      runs = []
+      cols = 0
+      continue
+    }
     emit(c.ch, { bold: c.bold, italic: c.italic, dim: c.dim, color: c.color })
   }
   flush()
@@ -287,9 +294,13 @@ function toolRowLines(row: LayoutRow, expanded: boolean, width: number): RenderL
     return wrapChars(plainChars(`⇣ ${tools.length} tool${tools.length > 1 ? 's' : ''} · ${names}`, { dim: true }), width)
   }
   return tools.flatMap((tool) => {
-    const marker = tool.state === 'running' ? '…' : tool.state === 'error' ? '✗' : '✓'
+    const marker = tool.state === 'running' ? '…' : tool.state === 'cancelled' ? '−' : tool.state === 'error' ? '✗' : '✓'
     const color = tool.state === 'error' ? 'red' : tool.state === 'done' ? 'green' : 'yellow'
-    return wrapChars(plainChars(`${marker} ${tool.name}`, { color }), width)
+    const detail = [tool.durationMs === undefined ? undefined : `${tool.durationMs} ms`, tool.error].filter(Boolean).join(' · ')
+    const title = `${marker} ${tool.name}${detail === '' ? '' : ' · ' + detail}`
+    const preview = tool.output === undefined || tool.output === '' ? []
+      : wrapChars(plainChars(tool.output.slice(0, 420), { dim: true }), width)
+    return [...wrapChars(plainChars(title, { color }), width), ...preview]
   })
 }
 
