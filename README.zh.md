@@ -1,76 +1,55 @@
-# dsh cli — 交互式终端 Agent
+# DS_CLI
 
-[English](README.md) | 中文
+![DS_CLI 横幅，两道光带在终端窗口处重新汇合](assets/ds-cli-banner.png)
 
-`dsh cli` 是一个**交互式终端 agent**，fork 自 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 并聚焦于 CLI 使用：在终端里获得像 [Claude Code](https://docs.anthropic.com/en/docs/claude-code) 那样的编码体验——全屏 UI、流式输出、工具卡、会话历史、权限控制，而无需浏览器。
+[English](README.md) · 简体中文
 
-底层是 DeepSeek Harness 的插件架构（[一切皆插件](https://github.com/cordiverse/cordis)），但此仓库只关注并打磨 `dsh cli` 这一条交互链路。
+**在终端里使用编码 Agent，关掉窗口后还可以接着做。** DS_CLI 基于 DeepSeek Harness `0.2.2-rc.5`。在项目中启动，选好 Agent 和权限，就能从 PowerShell 或 Git Bash 接回同一条会话、后台任务或 Shell。
 
-## 特性
+[快速开始](#quick-start) · [常用操作](#everyday-commands) · [文档](#learn-more)
 
-- **Claude Code 式交互**：全屏 alternate screen、输入框固定底部、上下箭头历史导航（含跨会话持久历史）
-- **Markdown 终端渲染**：粗体、斜体、代码、列表、标题按终端样式显示
-- **工具卡折叠**：相邻工具调用合并为一行，`Ctrl+O` 展开
-- **会话统计栏**：轮/步、LLM 耗时、首 token 延迟、吞吐、缓存命中率、输入/输出 tokens
-- **权限徽章**：`Shift+Tab` 循环 `read-only → workspace-write → danger-full-access`，`danger-full-access` 显示 "bypass permissions"
-- **自定义 provider**：指向任意 OpenAI 兼容端点（如 mify），模型路由与 `web_search` 均可配置
-- **会话恢复**：重开 `dsh cli` 续上次会话，`/session` 切换
-- **热加载开发**：`pnpm dsh:dev`（node --watch）改源码自动重启
-
-## Demo
-
-![dsh cli 交互式终端](assets/dsh-cli-demo.png)
+<a id="quick-start"></a>
 
 ## 快速开始
 
-要求 Node.js ≥ 22。
+使用 Node.js 24.9+ 和 pnpm 11.7.0，从源码构建当前功能分支。
 
 ```sh
-# from source
-git clone https://github.com/soolaugust/deepseek-harness-cli.git
-cd deepseek-harness-cli
-pnpm install
-pnpm run build
-pnpm dsh cli
+git clone --branch feature/rc5-terminal-harness https://github.com/Bowen-Xue-ac2/DS_CLI.git
+cd DS_CLI
+pnpm install --frozen-lockfile
+pnpm --dir apps/cli/runtime install --frozen-lockfile
+pnpm run build:lib
+node apps/cli/lib/bin.js --build-info
+node apps/cli/lib/bin.js --choose
 ```
 
-从 npm：
+如使用默认 DeepSeek 提供方，请在启动 Host 前在当前环境中设置 `DEEPSEEK_API_KEY`。在选择器用 **Tab** 切换工作区、Agent 和权限字段，**↑ / ↓** 切选项，**Enter** 确认。第一次可选 `read-only`，发一条理解项目文件的请求。
 
-```sh
-npx @deepseek-ai/dsh cli
-```
+下表用 `dsh` 表示已安装的入口。在源码目录运行时，可以用 `node apps/cli/lib/bin.js` 替代。
 
-首次启动会创建/恢复一个会话；输入文字回车发送，模型输出流式渲染在输入框上方。
+<a id="everyday-commands"></a>
 
-## 使用
+## 常用操作
 
-| 操作 | 效果 |
+| 想做什么 | 怎么操作 |
 | --- | --- |
-| 输入文字 + `Enter` | 发送给 agent |
-| `↑` / `↓` | 历史导航（跨会话持久） |
-| `Shift+Tab` | 循环权限 preset |
-| `Ctrl+O` | 展开/收起工具组 |
-| `Ctrl+C` | 运行中取消当前回合；提示符下退出 |
-| `/exit` `/help` `/clear` `/session` `/model` `/permission` | slash 命令 |
+| 在指定目录工作 | 进入已登记项目后运行 `dsh`，或用 `dsh --choose` 自选。在聊天里用 `/workspace` 切项目、`/cd` 切工具工作目录。 |
+| 关窗后接着做 | 在原项目运行 `dsh --resume`。用 `/sessions` 找会话、`/jobs` 查会话启动的后台任务。 |
+| 给请求补充上下文 | 输入 `@` 选文件或会话，输入 `$` 选 Skill，输入 `@connector:` 选可用的 MCP 服务。用 `/plugins` 和 `/mcp` 管理扩展。 |
+| 查看 Agent 做了什么 | `/activity` 查看工具调用及耗时，`/agents` 查看委派工作，`/diff` 查看 Host 最近一次改动摘要。用 `/permission` 调整会话权限。 |
+| 保持 Shell 运行 | `/terminal new` 选择 Shell，键入 `~.` 返回聊天，之后用 `/terminal` 接回。 |
 
-完整说明见 [CLI 指南](docs/user/guide/cli.md)。
+可以先输入 `@`，选中 `README.md`，再写 **「解释启动步骤，并指出哪些命令会写入磁盘。」** 补全列表随活动工作区和 Agent 变化。在聊天中输入 `/help` 可查看更多命令。
 
-## 配置自定义 provider
+<a id="learn-more"></a>
 
-通过 `~/.dsh/settings.yaml` 指向任意 OpenAI 兼容端点（如 mify、OpenRouter），模型路由和 `web_search` 均可配置。详见 [CLI 指南 · 使用自定义模型提供方](docs/user/guide/cli.md#use-a-custom-model-provider)。
+## 文档
 
-## 开发
+- [交互式 CLI 指南](docs/user/guide/cli.md)（[中文](docs/user/guide/cli.zh.md)）涵盖配置、按键和会话管理。
+- [能力与平台支持](docs/user/guide/cli-capabilities.md)（[中文](docs/user/guide/cli-capabilities.zh.md)）涵盖 MCP、插件、定时任务、工作树和浏览器接续。
+- [开发指南](docs/development.md)（[中文](docs/development.zh.md)）涵盖贡献流程和本地检查。
 
-```sh
-pnpm dsh:dev          # auto-restart on source changes (hot-reload development)
-pnpm run test         # unit tests
-pnpm run typecheck    # type checks
-```
+本项目 fork 自 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)，使用 [MIT 许可证](LICENSE)。
 
-## 继承自 DeepSeek Harness
-
-此仓库是 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的一个 fork，聚焦于其 `dsh cli` 交互式终端能力。完整的多 profile 架构、Web UI、SDK 等仍在 [上游仓库](https://github.com/deepseek-ai/deepseek-harness)。
-
-## 许可证
-
-[MIT](LICENSE)
+— Bowen 😄🤝

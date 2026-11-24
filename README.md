@@ -1,76 +1,49 @@
-# dsh cli — interactive terminal agent
+# DS_CLI
 
-English | [中文](README.zh.md)
+![DS_CLI banner with a terminal and two paths reconnecting](assets/ds-cli-banner.png)
 
-`dsh cli` is an **interactive terminal agent**, forked from [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) with a CLI focus: a [Claude Code](https://docs.anthropic.com/en/docs/claude-code)-style coding experience in your terminal — full-screen UI, streaming output, tool cards, session history, and permission controls, with no browser needed.
+English · [简体中文](README.zh.md)
 
-Under the hood it is DeepSeek Harness's plugin architecture ([everything is a plugin](https://github.com/cordiverse/cordis)), but this repository only cares about and polishes the single `dsh cli` interaction path.
+**A coding agent in your terminal, with sessions you can pick up after closing the window.** DS_CLI builds on DeepSeek Harness `0.2.2-rc.5`. Start in a project, choose what the agent can do, and reconnect to the same conversation, jobs, or shell from PowerShell or Git Bash.
 
-## Features
-
-- **Claude Code-style interaction**: full-screen alternate screen, input bar pinned to the bottom, up/down arrow history navigation (including cross-session persistent history)
-- **Markdown terminal rendering**: bold, italic, code, lists, and headings rendered with terminal styles
-- **Tool card folding**: adjacent tool calls merge into one line, expand with `Ctrl+O`
-- **Session stats bar**: turns/steps, LLM time, first-token latency, throughput, cache hit rate, input/output tokens
-- **Permission badge**: `Shift+Tab` cycles `read-only → workspace-write → danger-full-access`, with `danger-full-access` shown as "bypass permissions"
-- **Custom provider**: point to any OpenAI-compatible endpoint (e.g. mify), with both model routing and `web_search` configurable
-- **Session resume**: reopening `dsh cli` continues the last session, switch with `/session`
-- **Hot-reload development**: `pnpm dsh:dev` (node --watch) auto-restarts on source changes
-
-## Demo
-
-![dsh cli interactive terminal](assets/dsh-cli-demo.png)
+[Quick start](#quick-start) · [Everyday commands](#everyday-commands) · [Learn more](#learn-more)
 
 ## Quick start
 
-Requires Node.js ≥ 22.
+Use Node.js 24.9+ and pnpm 11.7.0. The following commands build this branch from source.
 
 ```sh
-# from source
-git clone https://github.com/soolaugust/deepseek-harness-cli.git
-cd deepseek-harness-cli
-pnpm install
-pnpm run build
-pnpm dsh cli
+git clone --branch feature/rc5-terminal-harness https://github.com/Bowen-Xue-ac2/DS_CLI.git
+cd DS_CLI
+pnpm install --frozen-lockfile
+pnpm --dir apps/cli/runtime install --frozen-lockfile
+pnpm run build:lib
+node apps/cli/lib/bin.js --build-info
+node apps/cli/lib/bin.js --choose
 ```
 
-From npm:
+Set `DEEPSEEK_API_KEY` in the launch environment before starting the Host to use the default DeepSeek provider. In the chooser, use **Tab** to move between workspace, agent, and permissions, **↑ / ↓** to change a selection, and **Enter** to confirm. Start with `read-only` and ask the agent to explain a file.
 
-```sh
-npx @deepseek-ai/dsh cli
-```
+The examples below use `dsh` for the installed entry point. From a source checkout, use `node apps/cli/lib/bin.js` in its place.
 
-The first launch creates/resumes a session; type text and press Enter to send, and model output renders streaming above the input bar.
+## Everyday commands
 
-## Usage
-
-| Action | Effect |
+| I want to… | Use |
 | --- | --- |
-| Type text + `Enter` | Send to the agent |
-| `↑` / `↓` | History navigation (cross-session persistent) |
-| `Shift+Tab` | Cycle permission preset |
-| `Ctrl+O` | Expand/collapse tool group |
-| `Ctrl+C` | Cancel current turn while running; quit at the prompt |
-| `/exit` `/help` `/clear` `/session` `/model` `/permission` | Slash commands |
+| Work in a specific folder | Run `dsh` from a registered project, or use `dsh --choose`. In chat, use `/workspace` to switch projects and `/cd` to change the tool working directory. |
+| Continue after closing the terminal | Run `dsh --resume` in the same project. Use `/sessions` to pick a saved conversation and `/jobs` to check work it started. |
+| Add context to a request | Type `@` to pick a file or session, `$` to pick a skill, or `@connector:` to choose an available MCP server. Use `/plugins` and `/mcp` to manage extensions. |
+| See what the agent did | Open `/activity` for tool calls and timing, `/agents` for delegated work, or `/diff` for the Host’s latest change summary. Set the session’s permissions with `/permission`. |
+| Keep a shell running | Open `/terminal new`, choose a shell, and type `~.` to return to chat. Reconnect later with `/terminal`. |
 
-Full instructions in the [CLI guide](docs/user/guide/cli.md).
+Try typing `@`, selecting `README.md`, and asking **“Explain the startup steps and point out which commands write to disk.”** The input menu stays scoped to the active workspace and agent. Open `/help` in chat for more commands.
 
-## Configuring a custom provider
+## Learn more
 
-Point `~/.dsh/settings.yaml` at any OpenAI-compatible endpoint (e.g. mify, OpenRouter); both model routing and `web_search` are configurable. See [CLI guide · Using a custom model provider](docs/user/guide/cli.md#use-a-custom-model-provider).
+- [Interactive CLI guide](docs/user/guide/cli.md) ([中文](docs/user/guide/cli.zh.md)) covers setup, keyboard controls, and session management.
+- [Capabilities and platform support](docs/user/guide/cli-capabilities.md) ([中文](docs/user/guide/cli-capabilities.zh.md)) covers MCP, plugins, scheduled jobs, worktrees, and browser handoff.
+- [Development guide](docs/development.md) ([中文](docs/development.zh.md)) covers contributing and local checks.
 
-## Development
+Forked from [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness). Licensed under [MIT](LICENSE).
 
-```sh
-pnpm dsh:dev          # auto-restart on source changes (hot-reload development)
-pnpm run test         # unit tests
-pnpm run typecheck    # type checks
-```
-
-## Inherited from DeepSeek Harness
-
-This repository is a fork of [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) focused on its `dsh cli` interactive terminal capability. The full multi-profile architecture, Web UI, SDK, and more remain in the [upstream repository](https://github.com/deepseek-ai/deepseek-harness).
-
-## License
-
-[MIT](LICENSE)
+— Bowen 😄🤝
