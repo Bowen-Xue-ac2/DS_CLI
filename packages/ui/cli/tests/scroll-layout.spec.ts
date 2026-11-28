@@ -146,7 +146,7 @@ describe('layoutItems', () => {
       item('user', { text: 'hello' }),
       item('assistant', { text: 'hi', streaming: false }),
     ]
-    const lines = plain(layoutItems(items, 80, []))
+    const lines = plain(layoutItems(items, 80))
     expect(lines[0]).toBe('> hello')
     expect(lines[1]).toBe('')
     expect(lines[2]).toBe('hi')
@@ -156,7 +156,7 @@ describe('layoutItems', () => {
     const items: CliViewItem[] = [
       { kind: 'assistant', text: '## 核心思路\n\n写时复制', streaming: true },
     ]
-    const lines = plain(layoutItems(items, 80, []))
+    const lines = plain(layoutItems(items, 80))
     // The heading is parsed, not shown as literal `##`.
     expect(lines.some(l => l.includes('##'))).toBe(false)
     expect(lines.some(l => l.includes('核心思路'))).toBe(true)
@@ -166,7 +166,7 @@ describe('layoutItems', () => {
     const items: CliViewItem[] = [
       { kind: 'assistant', text: '## ', streaming: true },
     ]
-    const lines = plain(layoutItems(items, 80, []))
+    const lines = plain(layoutItems(items, 80))
     expect(lines.length).toBeGreaterThan(0)
   })
 
@@ -175,7 +175,7 @@ describe('layoutItems', () => {
       { kind: 'tool', name: 'web_search', callId: 'a', state: 'done' },
       { kind: 'tool', name: 'read_file', callId: 'b', state: 'done' },
     ]
-    const collapsed = plain(layoutItems(items, 80, [false]))
+    const collapsed = plain(layoutItems(items, 80))
     expect(collapsed[0]).toContain('⇣ 2 tools')
     expect(collapsed[0]).toContain('web_search')
     expect(collapsed[0]).toContain('read_file')
@@ -186,9 +186,23 @@ describe('layoutItems', () => {
     const items: CliViewItem[] = [
       { kind: 'tool', name: 'bash', callId: 'a', state: 'done' },
     ]
-    const expanded = plain(layoutItems(items, 80, [true]))
+    const expanded = plain(layoutItems(items, 80, true))
     expect(expanded[0]).toContain('✓ bash')
     expect(expanded.length).toBe(1)
+  })
+
+  it('shows a short result preview per tool in the transcript', () => {
+    const items: CliViewItem[] = [
+      { kind: 'tool', name: 'pwsh', callId: 'a', state: 'running', summary: 'Inspect the fixture' },
+      { kind: 'tool', name: 'search', callId: 'b', state: 'error', durationMs: 50, error: 'EXIT_1',
+        output: 'first\nsecond\nthird\nlast' },
+    ]
+    expect(plain(layoutItems(items, 80, false, true))).toEqual([
+      '… pwsh · Inspect the fixture',
+      '✗ search · EXIT_1 · 50 ms',
+      '  first', '  second', '  third', '  … 1 more row · Ctrl+O',
+    ])
+    expect(plain(layoutItems(items, 80, true, true))).toContain('  last')
   })
 
   it('does not leave a blank line before a divider', () => {
@@ -196,7 +210,7 @@ describe('layoutItems', () => {
       item('assistant', { text: 'text', streaming: false }),
       { kind: 'divider' },
     ]
-    const lines = plain(layoutItems(items, 80, []))
+    const lines = plain(layoutItems(items, 80))
     // 'text', blank?, divider — no blank between text and divider.
     const textIdx = lines.indexOf('text')
     expect(lines[textIdx + 1]).toBe('─'.repeat(80))

@@ -27,6 +27,11 @@ function readVersion(): string {
 }
 
 const version = readVersion()
+const [nodeMajor = 0, nodeMinor = 0] = process.versions.node.split('.').map(Number)
+if (nodeMajor < 24 || (nodeMajor === 24 && nodeMinor < 9)) {
+  console.error(`dsh: Node.js 24.9.0 or newer is required (found ${process.versions.node}).`)
+  process.exit(1)
+}
 const invocation = parseDshArgs(process.argv.slice(2), version)
 
 switch (invocation.mode) {
@@ -84,6 +89,16 @@ switch (invocation.mode) {
         const { runTerminalHostCommand } = await import('./terminal-supervisor.ts')
         await runTerminalHostCommand(invocation.action, invocation.yes)
       }
+    } catch (error) {
+      console.error(`dsh: ${error instanceof Error ? error.message : String(error)}`)
+      process.exitCode = 1
+    }
+    break
+  }
+  case 'session': {
+    const { runTerminalSessionCommand } = await import('./terminal-session-command.ts')
+    try {
+      await runTerminalSessionCommand(invocation)
     } catch (error) {
       console.error(`dsh: ${error instanceof Error ? error.message : String(error)}`)
       process.exitCode = 1

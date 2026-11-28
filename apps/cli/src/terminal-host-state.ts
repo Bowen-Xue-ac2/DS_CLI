@@ -34,7 +34,8 @@ export interface TerminalHostCredentials {
 export function terminalHostPaths(env: NodeJS.ProcessEnv) {
   const home = resolve(resolveDshHome(undefined, env), 'ds-cli-host-0.2')
   const directory = join(home, '.terminal-host')
-  return { home, directory, lease: join(directory, 'lease'), state: join(directory, 'state.json') }
+  return { home, directory, lease: join(directory, 'lease'), state: join(directory, 'state.json'),
+    recovery: join(directory, 'recovery') }
 }
 
 function validPid(value: unknown): value is number {

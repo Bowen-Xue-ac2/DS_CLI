@@ -212,6 +212,27 @@ describe('composeEntries', () => {
 })
 
 describe('healProfilesModuleFallback', () => {
+  it('resolves transitive dependencies from the installed bundle rather than the link location', () => {
+    const anchor = stageInstallation({})
+    const manifest = JSON.parse(readFileSync(anchor, 'utf8')) as { dependencies: Record<string, string> }
+    manifest.dependencies['bundle-a'] = '0.0.0'
+    writeFileSync(anchor, JSON.stringify(manifest))
+    const modules = join(anchor, '..', 'node_modules')
+    const bundleModules = join(modules, '.pnpm', 'bundle-a', 'node_modules')
+    const bundle = join(bundleModules, 'bundle-a')
+    const dependency = join(bundleModules, 'nested-dep')
+    mkdirSync(bundle, { recursive: true })
+    mkdirSync(dependency, { recursive: true })
+    writeFileSync(join(bundle, 'package.json'), JSON.stringify({ name: 'bundle-a', dependencies: { 'nested-dep': '0.0.0' } }))
+    writeFileSync(join(dependency, 'package.json'), JSON.stringify({ name: 'nested-dep' }))
+    symlinkSync(bundle, join(modules, 'bundle-a'), 'junction')
+    const home = tmp()
+    healProfilesModuleFallback(anchor, home)
+    const fallback = join(home, 'profiles', 'node_modules', 'nested-dep')
+    expect(lstatSync(fallback).isSymbolicLink()).toBe(true)
+    expect(JSON.parse(readFileSync(join(fallback, 'package.json'), 'utf8'))).toEqual({ name: 'nested-dep' })
+  })
+
   it('links the app and bundle dependency surface flat under profiles/node_modules', () => {
     const anchor = stageInstallation({
       'bundle-a': { patch: '[]\n', deps: { 'dep-of-a': '0.0.0', 'ghost-dep': '0.0.0' } },

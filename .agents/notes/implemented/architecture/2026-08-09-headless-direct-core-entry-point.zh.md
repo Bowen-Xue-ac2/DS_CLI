@@ -39,6 +39,8 @@ Status: implemented
 
 ## 后果
 
+Headless 启动提供方接收指定的会话 ID 与 JSON Lines 输出模式。续跑通过精确 ID 加载持久会话，在发布 Agent 前核对原工作目录。JSON 流投影已提交的 Session 事件，最后一条记录在会话落盘后写出。默认输出为普通文本。
+
 `dsh --profile headless` 提供本地 Agent 任务，而不是浏览器观察、Host API 或 HTTP。需要这些能力的用户选择 `dsh web`。成功时 stderr 为空，完成结果在持久化 flush 后推导，持久化会话仍可供后续工具使用。初始用户消息记录 `source.kind: 'user'`，因此不携带 ApiProxy `rpcId`。
 
 ApiProxy 载体覆盖保留在 ApiProxy 包中。自定义一次性 profile 可以显式包含 Host 或 Web 组合包；随附 profile 与可识别的安装过程所属元组均不含 Web。

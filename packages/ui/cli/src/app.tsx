@@ -44,22 +44,30 @@ export interface CliAppProps {
   completion?: CliCompletionSource
   /** A failed admission whose draft should be retained if the user has not already edited another. */
   restore?: CliSubmission
+  /** Persist edits to the unsent text for the displayed Session. */
+  onDraftChange?(this: void, sessionId: string, text: string): void
 }
 
 /** The assembled terminal UI. */
 export function CliApp({
-  store, onSubmit, onCtrlC, onExit, onHistoryUp, onHistoryDown, onCyclePermission, menu, completion, restore,
+  store, onSubmit, onCtrlC, onExit, onHistoryUp, onHistoryDown, onCyclePermission, menu, completion, restore, onDraftChange,
 }: CliAppProps) {
   const view = useCliView(store)
   const [drafts, setDrafts] = React.useState<ReadonlyMap<string, CliSubmission>>(() => new Map())
   const [transcript, setTranscript] = React.useState(false)
+  const [completionRows, setCompletionRows] = React.useState(0)
+  const compact = completion?.initial !== undefined
   const draft = drafts.get(view.sessionId)
   const input = draft?.text ?? ''
   React.useEffect(() => {
     if (restore === undefined) return
     setDrafts(previous => previous.has(restore.sessionId) ? previous : new Map(previous).set(restore.sessionId, restore))
   }, [restore])
+  React.useEffect(() => {
+    if (draft !== undefined && draft === restore) onDraftChange?.(draft.sessionId, draft.text)
+  }, [draft, onDraftChange, restore])
   function setInput(value: string): void {
+    onDraftChange?.(view.sessionId, value)
     setDrafts((previous) => {
       const next = new Map(previous)
       if (value === '') next.delete(view.sessionId)
@@ -104,22 +112,24 @@ export function CliApp({
   if (view.inputLocked === true && view.sessionId === '') return <InkText>Connecting to DSH Host…</InkText>
   if (transcript) return (
     <Box flexDirection="column">
-      <InkText bold>Transcript</InkText>
+      <Box>
+        <InkText bold>Transcript  </InkText>
+        <StatusBar view={view} compact />
+      </Box>
       <ScrollRegion key="transcript" view={view} details />
-      <InkText dimColor>PgUp / PgDn to scroll · Ctrl+T or Esc to return</InkText>
     </Box>
   )
   return (
     <Box flexDirection="column">
       {view.project === undefined ? null : (
-        <InkText>Workspace {view.project} · Directory {view.cwd}</InkText>
+        <InkText wrap={compact ? 'truncate-end' : 'wrap'}>Workspace {view.project} · Directory {view.cwd}</InkText>
       )}
-      <ScrollRegion view={view} />
+      <ScrollRegion view={view} menuRows={completionRows} reservedRows={compact ? (view.project === undefined ? 5 : 6) : 4} />
       <Box flexShrink={0} flexDirection="row">
         <Box flexGrow={1}>
           <StatusBar view={view} />
         </Box>
-        <SessionStats view={view} />
+        {compact ? null : <SessionStats view={view} />}
       </Box>
       <Box
         flexShrink={0}
@@ -145,17 +155,24 @@ export function CliApp({
             {...(restore !== undefined && draft === restore ? { restoreCursor: restore } : {})}
             {...(completion === undefined ? {} : {
               completion, completionScope: JSON.stringify([view.sessionId, view.cwd, view.mode]), onCompletion: rememberChoice,
+              onCompletionRows: setCompletionRows,
             })}
             {...(onHistoryUp === undefined ? {} : { onHistoryUp })}
             {...(onHistoryDown === undefined ? {} : { onHistoryDown })}
           />
         </Box>
       </Box>
-      <ModeBadge view={view} />
-      <Box flexDirection="row">
-        <PermissionBadge view={view} />
-        <InkText dimColor>  ·  Ctrl+T transcript</InkText>
-      </Box>
+      {compact ? <InkText dimColor wrap="truncate-end">
+        {view.permission === 'danger-full-access' ? <InkText color="yellow">bypass permissions on · </InkText>
+          : view.permission ? `${view.permission} on · ` : ''}{view.mode ? `${view.mode} · ` : ''}
+        / Commands · @ References · $ Skills · Ctrl+T Transcript
+      </InkText> : <>
+        <ModeBadge view={view} />
+        <Box flexDirection="row">
+          <PermissionBadge view={view} />
+          <InkText dimColor>  ·  Ctrl+T transcript</InkText>
+        </Box>
+      </>}
     </Box>
   )
 }

@@ -50,7 +50,7 @@ function appendTurn(
 /** Mount the real registries around a small scripted Agent factory. */
 async function bench(script: Script): Promise<{
   ctx: Context
-  run(): Promise<{ code: number; out: string; err: string; order: string[] }>
+  run(config?: Config): Promise<{ code: number; out: string; err: string; order: string[] }>
 }> {
   const ctx = new Context()
   await ctx.plugin(SessionStore)
@@ -91,7 +91,7 @@ async function bench(script: Script): Promise<{
   })
   return {
     ctx,
-    run: async () => {
+    run: async (config = { task: 'do the thing' }) => {
       let out = ''
       let err = ''
       const order: string[] = []
@@ -101,13 +101,35 @@ async function bench(script: Script): Promise<{
       const exited = new Promise<number>((resolve) => {
         ctx.provide('appExit', (code: number) => { order.push('exit'); resolve(code) })
       })
-      apply(ctx, { task: 'do the thing' })
+      apply(ctx, config)
       return { code: await exited, out, err, order }
     },
   }
 }
 
 describe('headless runner', () => {
+  it('writes only the submitted turn and its committed answer to the JSON stream', async () => {
+    const test = await bench({
+      afterPrompt(session, message) { appendTurn(session, 1, message, 'final answer', true) },
+    })
+    try {
+      const result = await test.run({ task: 'do the thing', json: true })
+      const records = result.out.trimEnd().split('\n').map(line => JSON.parse(line) as { sessionId?: string })
+      const sessionId = records[0]?.sessionId
+      expect(sessionId).toMatch(/^session-/u)
+      expect(records).toEqual([
+        { type: 'session', sessionId, cwd: expect.any(String) },
+        { type: 'status', phase: 'turn_start', turn: 1 },
+        { type: 'text', text: 'final answer' },
+        { type: 'status', phase: 'turn_end', turn: 1, reason: { kind: 'completed' } },
+        { type: 'final', sessionId, reason: { kind: 'completed' }, text: 'final answer' },
+      ])
+      expect(result).toMatchObject({ code: 0, err: '', order: ['flush', 'exit'] })
+    } finally {
+      await test.ctx.fiber.dispose()
+    }
+  })
+
   it('aggregates the final text across the complete idle-to-idle interval and flushes before exit', async () => {
     const test = await bench({
       before(session) {

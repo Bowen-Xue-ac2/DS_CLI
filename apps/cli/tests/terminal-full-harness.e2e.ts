@@ -17,7 +17,7 @@ it.runIf(process.platform === 'win32').each(['pwsh.exe', 'bash.exe'] as const)(
     await writeFile(file, 'PACKED_HARNESS_INPUT\n')
     const key = 'packaged-harness-fixture'
     const model = await startMockLlmServer({
-      apiKey: key, sequence: ['tool_call_success', 'success'],
+      apiKey: key, sequence: ['tool_call_success', 'slow_success'], chunkSize: 8, chunkDelayMs: 150,
       toolCalls: { 1: { name: 'pwsh', arguments: JSON.stringify({
         command: "Add-Content -LiteralPath 'harness note.txt' -Value PACKED_HARNESS_EDIT",
         description: 'Add the fixture line once', sandbox_permissions: 'workspace-write', justification: 'One-shot acceptance',
@@ -43,9 +43,9 @@ it.runIf(process.platform === 'win32').each(['pwsh.exe', 'bash.exe'] as const)(
       await pty.until('No managed MCP servers configured')
       let mark = pty.mark()
       pty.send('$dsh-do')
-      await pty.until('/dsh-doc', mark)
+      await pty.until('$dsh-doc', mark)
       pty.send('\t')
-      await pty.until('❯ /dsh-doc', mark)
+      await pty.until('❯ $dsh-doc', mark)
       mark = pty.mark()
       pty.send('Apply the local fixture update to @harness')
       await pty.until('harness note.txt · File', mark)
@@ -54,10 +54,20 @@ it.runIf(process.platform === 'win32').each(['pwsh.exe', 'bash.exe'] as const)(
       expect(model.requests).toHaveLength(0)
       pty.send('\r')
       await pty.until('Approve tool pwsh?')
+      pty.resize(72, 18)
       pty.send('\x1b[B')
       await pty.until('● Allow once')
+      mark = pty.mark()
       pty.send('\r')
-      await pty.until('PACKED_HARNESS_COMPLETE')
+      await pty.until('● Responding', mark)
+      await pty.until('PACKED_HARNESS_COMPLETE', mark)
+      pty.resize(162, 40)
+      mark = pty.mark()
+      pty.send('\x14')
+      await pty.until('Transcript', mark)
+      await pty.until('PACKED_HARNESS_COMPLETE', mark)
+      await pty.until('pwsh', mark)
+      pty.send('\x14')
       expect((await readFile(file, 'utf8')).trim().split(/\r?\n/u)).toEqual(['PACKED_HARNESS_INPUT', 'PACKED_HARNESS_EDIT'])
       expect(JSON.stringify(model.requests[0]?.body)).toContain('harness note.txt')
       pty.send('/exit\r')

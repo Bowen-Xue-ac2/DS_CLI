@@ -10,10 +10,10 @@ English · [简体中文](README.zh.md)
 
 ## Quick start
 
-Use Node.js 24.9+ and pnpm 11.7.0. The following commands build this branch from source.
+Use Node.js 24.9+ and pnpm 11.7.0 to build DS_CLI from source.
 
 ```sh
-git clone --branch feature/rc5-terminal-harness https://github.com/Bowen-Xue-ac2/DS_CLI.git
+git clone https://github.com/Bowen-Xue-ac2/DS_CLI.git
 cd DS_CLI
 pnpm install --frozen-lockfile
 pnpm --dir apps/cli/runtime install --frozen-lockfile
@@ -31,8 +31,10 @@ The examples below use `dsh` for the installed entry point. From a source checko
 | I want to… | Use |
 | --- | --- |
 | Work in a specific folder | Run `dsh` from a registered project, or use `dsh --choose`. In chat, use `/workspace` to switch projects and `/cd` to change the tool working directory. |
-| Continue after closing the terminal | Run `dsh --resume` in the same project. Use `/sessions` to pick a saved conversation and `/jobs` to check work it started. |
-| Add context to a request | Type `@` to pick a file or session, `$` to pick a skill, or `@connector:` to choose an available MCP server. Use `/plugins` and `/mcp` to manage extensions. |
+| Continue after closing the terminal | Run `dsh --resume` in the same project to reopen the session and restore its unsent text. Use `/sessions` to select a saved conversation and `/jobs` to check its background work. |
+| Open a command or add context | Type `/` for common commands, `@` for files, sessions, agents, connectors, and plugins, or `$` for skills. Each menu opens as soon as you type the symbol. |
+| Follow live progress | Press **Ctrl+T** while the agent runs. New activity moves earlier rows up. Scrolling back pauses the view, and **End** resumes following. Press **Ctrl+O** to expand tool output and **Esc** to return to chat. |
+| Steer an active turn | Use `/steer <instruction>` to send an instruction for the agent’s next step. Use `/ps` to check running jobs and shells. |
 | See what the agent did | Open `/activity` for tool calls and timing, `/agents` for delegated work, or `/diff` for the Host’s latest change summary. Set the session’s permissions with `/permission`. |
 | Keep a shell running | Open `/terminal new`, choose a shell, and type `~.` to return to chat. Reconnect later with `/terminal`. |
 

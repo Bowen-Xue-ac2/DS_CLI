@@ -11,7 +11,7 @@ export interface TriggerMatch {
 /** A completion choice with a stable identity, distinct from its text. */
 export interface CliCompletionItem {
   readonly id: string
-  readonly kind: 'command' | 'skill' | 'file' | 'session' | 'agent' | 'connector' | 'plugin'
+  readonly kind: 'category' | 'command' | 'skill' | 'file' | 'session' | 'agent' | 'connector' | 'plugin'
   readonly label: string
   readonly insert: string
   readonly scope: string
@@ -23,7 +23,11 @@ export interface CliCompletionItem {
 }
 
 /** Load choices for a cursor token in the active terminal context. */
-export type CliCompletionSource = (match: TriggerMatch, signal: AbortSignal) => Promise<readonly CliCompletionItem[]>
+export interface CliCompletionSource {
+  (match: TriggerMatch, signal: AbortSignal): Promise<readonly CliCompletionItem[]>
+  /** Local rows available before any Host lookup completes. */
+  initial?(match: TriggerMatch): readonly CliCompletionItem[]
+}
 
 /**
  * Locate a supported trigger at the current cursor.
@@ -45,10 +49,11 @@ export function findTrigger(text: string, cursor: number): TriggerMatch | undefi
   const query = plain[2] ?? ''
   const start = offset - query.length - 1
   if (trigger !== '@' && trigger !== '/' && trigger !== '$') return undefined
-  if (trigger !== '@' && (text.slice(0, start).trim() !== '' || !/^[a-z0-9._-]*$/u.test(query))) {
+  const word = trigger === '$' ? /^(?:all:)?[a-z0-9._-]*$/u : /^[a-z0-9._-]*$/u
+  if (trigger !== '@' && (text.slice(0, start).trim() !== '' || !word.test(query))) {
     return undefined
   }
-  const remainder = trigger === '@' ? /^[^\s"\\]*/u : /^[a-z0-9._-]*/u
+  const remainder = trigger === '@' ? /^[^\s"\\]*/u : trigger === '$' ? /^[a-z0-9._:-]*/u : /^[a-z0-9._-]*/u
   const suffix = remainder.exec(text.slice(offset))?.[0] ?? ''
   return { trigger, start, end: offset + suffix.length, query }
 }

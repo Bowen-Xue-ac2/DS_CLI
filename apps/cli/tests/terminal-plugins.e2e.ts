@@ -107,7 +107,7 @@ export function apply(ctx) {
     await pty.until('❯\r', clearPlugin)
     const skill = pty.mark()
     pty.send('$fixture-s')
-    await pty.until('/fixture-skill', skill)
+    await pty.until('$fixture-skill', skill)
     pty.send('\x1b')
     const clear = pty.mark()
     pty.send('\x15')

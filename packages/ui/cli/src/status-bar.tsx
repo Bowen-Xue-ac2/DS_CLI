@@ -80,14 +80,15 @@ function statusLabel(view: CliViewState): string {
  * Render the busy state and session id as the status line above the input
  * bar, upper-left.
  * @param view - the current view state.
+ * @param compact - omit the session id in the transcript header.
  */
-export function StatusBar({ view }: { view: CliViewState }) {
+export function StatusBar({ view, compact = false }: { view: CliViewState; compact?: boolean }) {
   return (
-    <Box flexShrink={0}>
-      <Text color={view.busy ? 'yellow' : 'green'}>
+    <Box flexShrink={compact ? 1 : 0}>
+      <Text color={view.busy ? 'yellow' : 'green'} wrap={compact ? 'truncate-end' : 'wrap'}>
         {statusLabel(view)}
       </Text>
-      <Text dimColor>  {view.sessionId}</Text>
+      {!compact && <Text dimColor>  {view.sessionId}</Text>}
     </Box>
   )
 }

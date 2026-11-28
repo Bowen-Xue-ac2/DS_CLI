@@ -11,8 +11,7 @@
  * The entry point is `layoutItems`: it folds adjacent tool calls (collapsed to
  * one `⇣ n tools` line, or expanded per tool), inserts one blank separator
  * line between distinct message blocks, and returns the flat line list the
- * scroll region slices from. Folding state arrives from the component as an
- * array indexed by tool-group position.
+ * scroll region slices from.
  * @module @deepseek-ai/dsh-cli-ui/scroll-layout
  */
 
@@ -287,9 +286,9 @@ export function foldRows(items: readonly CliViewItem[]): LayoutRow[] {
 }
 
 /** Build the styled lines for a tool row. */
-function toolRowLines(row: LayoutRow, expanded: boolean, width: number): RenderLine[] {
+function toolRowLines(row: LayoutRow, expanded: boolean, details: boolean, width: number): RenderLine[] {
   const tools = row.tools ?? []
-  if (!expanded) {
+  if (!details && !expanded) {
     const names = [...new Set(tools.map(t => t.name))].join(', ')
     const active = tools.filter(tool => tool.state === 'running').length
     const failed = tools.filter(tool => tool.state === 'error').length
@@ -299,11 +298,21 @@ function toolRowLines(row: LayoutRow, expanded: boolean, width: number): RenderL
   return tools.flatMap((tool) => {
     const marker = tool.state === 'running' ? '…' : tool.state === 'cancelled' ? '−' : tool.state === 'error' ? '✗' : '✓'
     const color = tool.state === 'error' ? 'red' : tool.state === 'done' ? 'green' : 'yellow'
-    const detail = [tool.durationMs === undefined ? undefined : `${tool.durationMs} ms`, tool.error].filter(Boolean).join(' · ')
-    const title = `${marker} ${tool.name}${detail === '' ? '' : ' · ' + detail}`
-    const preview = tool.output === undefined || tool.output === '' ? []
-      : wrapChars(plainChars(tool.output.slice(0, 420), { dim: true }), width)
-    return [...wrapChars(plainChars(title, { color }), width), ...preview]
+    const title = [`${marker} ${tool.name}`, tool.summary, tool.error,
+      tool.durationMs === undefined ? undefined : `${tool.durationMs} ms`].filter(Boolean).join(' · ')
+    const output = (tool.output ?? '').trimEnd().replace(/\t/gu, '    ')
+    const indent = width >= 4 ? '  ' : ''
+    const outputRows = output === '' ? []
+      : output.split('\n').flatMap(line => wrapText(line, width - indent.length))
+    const shown = expanded ? outputRows : outputRows.slice(0, 3)
+    const hidden = outputRows.length - shown.length
+    const lines = wrapChars(plainChars(title, { color }), width)
+    for (const line of shown) lines.push(...wrapChars(plainChars(indent + line, { dim: true }), width))
+    if (hidden > 0) {
+      const hint = `${indent}… ${hidden} more ${hidden === 1 ? 'row' : 'rows'} · Ctrl+O`
+      lines.push(...wrapChars(plainChars(truncateToColumns(hint, width), { dim: true }), width))
+    }
+    return lines
   })
 }
 
@@ -343,18 +352,18 @@ function itemLines(item: NonToolItem, width: number, details: boolean): RenderLi
  * is its own block and needs no extra gap.
  * @param items - the conversation items.
  * @param width - the terminal width in columns.
- * @param expanded - per-tool-group expansion flags, indexed by group position.
- * @param details - show provider reasoning and expanded tool output.
+ * @param expanded - expand folded tool groups and show their retained output.
+ * @param details - show provider reasoning and per-tool previews.
  * @returns the flat line list.
  */
-export function layoutItems(items: readonly CliViewItem[], width: number, expanded: boolean[], details = false): RenderLine[] {
+export function layoutItems(items: readonly CliViewItem[], width: number, expanded = false, details = false): RenderLine[] {
   const rows = foldRows(items)
   const out: RenderLine[] = []
   const blank: RenderLine = { runs: [] }
   let previousHadLines = false
-  for (const [index, row] of rows.entries()) {
+  for (const row of rows) {
     if (row.tools !== undefined) {
-      const lines = toolRowLines(row, details || (expanded[index] ?? false), width)
+      const lines = toolRowLines(row, expanded, details, width)
       if (lines.length === 0) continue
       if (previousHadLines) out.push(blank)
       out.push(...lines)

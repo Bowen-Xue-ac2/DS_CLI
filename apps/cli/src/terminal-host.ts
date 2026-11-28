@@ -164,6 +164,7 @@ interface TerminalWorkspaceEntry {
 export type TerminalSessionFrame =
   | {
     readonly type: 'snapshot'
+    readonly header: { readonly isSeeded: boolean; readonly parentSession?: string; readonly origin?: 'subagent' }
     readonly records: readonly TerminalSessionEntry[]
     readonly hasMore: boolean
     readonly assistantStream?: { readonly activeAttempt?: TerminalAssistantAttempt & { readonly stream: readonly unknown[] } }
@@ -288,7 +289,7 @@ export interface ClientRemote extends TerminalPluginsRemote, TerminalAutomationR
     fork(request: { sessionId: string; allowMigration: false }):
     Promise<HostResult<{ readonly sessionId: string }>>
     rename(request: { sessionId: string; title: string }): Promise<HostResult<{ readonly title: string }>>
-    prompt(request: { sessionId: string; requestId: string; mode: 'queue'; content: readonly TerminalPromptPart[] },
+    prompt(request: { sessionId: string; requestId: string; mode: 'queue' | 'steer'; content: readonly TerminalPromptPart[] },
       signal: AbortSignal): Promise<HostResult<{ readonly accepted: true }>>
     cancel(request: { sessionId: string }): Promise<HostResult<unknown>>
   }

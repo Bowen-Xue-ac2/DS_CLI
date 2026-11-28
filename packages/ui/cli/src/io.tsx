@@ -42,6 +42,8 @@ export interface InteractiveIoOptions {
   onCyclePermission?(this: void): void
   /** Inspect current-session completion metadata. */
   completion?: CliCompletionSource
+  /** Record changes to the unsent composer text, including clearing it after submission. */
+  onDraftChange?(this: void, sessionId: string, text: string): void
 }
 
 /**
@@ -115,6 +117,7 @@ export function createInteractiveIo(options: InteractiveIoOptions): InteractiveI
         {...(options.onCyclePermission === undefined ? {} : { onCyclePermission: options.onCyclePermission })}
         {...(activeMenu === undefined ? {} : { menu: activeMenu })}
         {...(options.completion === undefined ? {} : { completion: options.completion })}
+        {...(options.onDraftChange === undefined ? {} : { onDraftChange: options.onDraftChange })}
         {...(restore === undefined ? {} : { restore })}
       />
     )

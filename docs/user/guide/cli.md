@@ -50,9 +50,15 @@ dsh cli --resume session-xxxx
 
 Type a message and press **Enter** to send it to the Agent. Messages and tool status appear above the input bar.
 
-Type `/` to see common commands such as `/session`, `/usage`, `/status`, and `/ps`. Type a prefix to find other terminal commands. Use the arrow keys to move, **Enter** to run the selection, or **Tab** to fill it in and add arguments. Type `$` to pick a Skill, or `@` to pick a workspace path or session. **Esc** dismisses the menu and keeps the draft.
+Type `/`, `@`, or `$` to open its menu immediately. Use **↑/↓** to move and **Esc** to close the menu and keep the draft. Clear and retype the trigger to reopen the menu.
 
-The status line shows when the model is thinking, responding, or running tools. Press **Ctrl+T** to open the transcript with expanded tool cards and reasoning text supplied by the model provider. Use **PgUp** or **PgDn** to scroll, and **Ctrl+T** or **Esc** to return to the draft. Use `/history` to load older turns before opening the transcript.
+- **`/`** opens common terminal commands such as `/session`, `/usage`, `/status`, and `/ps`. Type a prefix to find more. Press **Enter** to run the command or **Tab** to fill it in and add arguments.
+- **`@`** opens Files, Sessions, Agents, Connectors, and Plugins. Pick a category with **Enter** or **Tab**, then pick an item or type to filter. You can also type a prefix directly, such as `@file:` or `@connector:`.
+- **`$`** opens the current Agent's Skill menu. Pick **Browse skills** to open the catalog, or type part of a skill name. Pick a skill, add your task, and then send the message.
+
+The status line shows when the model is thinking, responding, or running tools. Press **Ctrl+T** during or after a turn to open the live transcript. While it shows **Following**, new activity moves older rows up automatically. Use **↑** / **↓**, **PgUp** / **PgDn**, or the mouse wheel to browse earlier rows. The transcript shows **Paused** while you browse. Press **End** to jump back to the latest activity and follow it again.
+
+Tool entries show their status, available description and timing, and the first three rows of output. Use **Ctrl+O** to toggle the retained output. The transcript also shows reasoning text supplied by the model provider. Use **Ctrl+T** or **Esc** to return to your draft, and `/history` to load older turns.
 
 Type `@agent:` to find configured Agent presets. Select a preset, add your request, and review the work directory and permission before sending. The request starts in a new session, and you can return to the original conversation with `/sessions`.
 
@@ -66,6 +72,8 @@ Type `@connector:` to find connected MCP servers available to this Agent. Select
 | `/usage` | Show session tokens, cache use, and timing |
 | `/status` | Show workspace, directory, Agent, permissions, and the last model used |
 | `/ps` | List this session's running jobs and persistent shells |
+| `/steer <instruction>` | Add plain text for the Agent's next step during active work |
+| `/cancel` | Cancel the active turn. The rc.5 Host keeps pending messages and resumes them when the session receives a new message |
 | `/commands` | List commands registered by the Host for this session |
 | `/clear` | Clear the visible transcript |
 | `/workspace` | Select a workspace, browse directories, and choose an existing or new session |
@@ -101,7 +109,13 @@ The approval menu offers **Deny** and **Allow once** for the requesting tool. Fu
 
 `/exit` detaches the terminal. The shared Host keeps the session and eligible background work running. Run `dsh host status` to inspect it, `dsh host open --session <id>` to open a specific session in the browser, and `dsh host stop` to explicitly stop it. A different `--patch` set takes effect after stopping the current Host.
 
+After an interrupted Host reports stale state, run `dsh host recover` to clear the launch record once both recorded processes have exited. Run `dsh --resume <id>` to reopen a saved session.
+
 The interactive Host reads settings and stores workspaces and sessions under `$DSH_HOME/ds-cli-host-0.2`. It can also read API keys from the environment inherited from the invoking shell. A named `--resume` restores a session from this Host.
+
+Reopening a session restores its unsent text in the input. Choose connector and plugin references again after reopening so the current Host can resolve them. The transcript includes committed compaction summaries.
+
+In another shell, run `dsh session history <id>` for the recent saved records or `dsh session events <id>` to follow the same session as JSON Lines. Run `dsh session steer <id> "<instruction>"` to send plain text to the next step of an active turn. Ctrl+C stops the event reader and leaves the terminal session running.
 
 <a id="use-a-custom-model-provider"></a>
 

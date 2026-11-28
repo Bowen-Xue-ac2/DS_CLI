@@ -46,8 +46,10 @@ interface PluginInvocation {
 
 /** The resolved `dsh` invocation. Help, version, and errors exit inside {@link parseDshArgs}. */
 export type DshInvocation = ProfileInvocation | DumpConfigInvocation | PluginInvocation | { mode: 'build-info' }
-  | { mode: 'host'; action: 'status' | 'stop'; yes: boolean }
+  | { mode: 'host'; action: 'status' | 'stop' | 'recover'; yes: boolean }
   | { mode: 'host'; action: 'open'; session?: string; printUrl: boolean }
+  | { mode: 'session'; action: 'history' | 'events'; sessionId: string }
+  | { mode: 'session'; action: 'steer'; sessionId: string; text: string }
 
 /** Launcher flags shared by the default command and the `web` alias. */
 interface BootOptions {
@@ -211,8 +213,25 @@ export function parseDshArgs(argv: readonly string[], version: string): DshInvoc
       resolved = resolveBoot(cli, 'cli', options, args)
     })
 
-  program.command('host').description('inspect, stop or open the shared terminal Host')
-    .argument('<action>', 'status, stop or open')
+  program.command('session').description('use a saved terminal session from a script')
+    .argument('<action>', 'history, events or steer')
+    .argument('<id>', 'terminal Session ID')
+    .argument('[instruction...]', 'text for steer')
+    .action((action: string, sessionId: string, words: string[]) => {
+      rejectParentOptions('session')
+      if (action === 'steer') {
+        const text = words.join(' ').trim()
+        if (text.length === 0 || text.startsWith('/')) program.error('error: steer takes a plain text instruction')
+        resolved = { mode: 'session', action, sessionId, text }
+      } else if ((action === 'history' || action === 'events') && words.length === 0) {
+        resolved = { mode: 'session', action, sessionId }
+      } else {
+        program.error('error: use dsh session history <id>, events <id>, or steer <id> <instruction>')
+      }
+    })
+
+  program.command('host').description('inspect, stop, recover or open the shared terminal Host')
+    .argument('<action>', 'status, stop, recover or open')
     .option('--yes', 'confirm a stop from a noninteractive terminal')
     .option('--session <id>', 'Session to open in the browser')
     .option('--print-url', 'print the one-time browser handoff URL')
@@ -224,7 +243,9 @@ export function parseDshArgs(argv: readonly string[], version: string): DshInvoc
           ...(options.session === undefined ? {} : { session: options.session }) }
         return
       }
-      if (action !== 'status' && action !== 'stop') return program.error('error: choose dsh host status, dsh host stop or dsh host open')
+      if (action !== 'status' && action !== 'stop' && action !== 'recover') {
+        return program.error('error: choose dsh host status, stop, recover or open')
+      }
       if (options.session !== undefined || options.printUrl === true) {
         program.error('error: --session and --print-url are only valid with dsh host open')
       }

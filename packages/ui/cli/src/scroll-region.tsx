@@ -7,15 +7,15 @@
  *
  * Scrolling is keyboard-driven: PgUp/PgDn page the window. While pinned to the
  * bottom the region auto-follows new items as they arrive; scrolling back pauses
- * the follow until the user returns to the bottom. ↑/↓ stay with the text input
- * for history navigation, so they are not consumed here.
+ * the follow until the user returns to the bottom. The details view also
+ * supports line scrolling with ↑/↓ and jumping to the latest line with End.
  * @module @deepseek-ai/dsh-cli-ui/scroll-region
  */
 
 import * as React from 'react'
-import { Box, Text, useInput, useStdout } from 'ink'
+import { Box, Text, useInput, useStdin, useStdout } from 'ink'
 import type { CliViewState } from './types.ts'
-import { layoutItems, foldRows, parseMouseWheel, scrollStep, viewportSlice } from './scroll-layout.ts'
+import { layoutItems, parseMouseWheel, scrollStep, viewportSlice } from './scroll-layout.ts'
 import type { StyledRun } from './scroll-layout.ts'
 
 /** Rows reserved above the scroll region by the status line, stats, and input. */
@@ -43,71 +43,86 @@ function StyledText({ run }: { run: StyledRun }) {
  * styled line list sized to the terminal rows, so the newest items stay on
  * screen and the input stays pinned at the bottom.
  * @param view - the current view state.
- * @param details - expand the reasoning and tool rows in transcript mode.
+ * @param details - show provider reasoning and individual tool calls in transcript mode.
+ * @param menuRows - lines occupied by the composer completion menu.
+ * @param reservedRows - lines occupied by the rest of the composer and status.
  */
-export function ScrollRegion({ view, details = false }: { view: CliViewState; details?: boolean }) {
+export function ScrollRegion({ view, details = false, menuRows = 0, reservedRows = FIXED_ROWS }: {
+  view: CliViewState
+  details?: boolean
+  menuRows?: number
+  reservedRows?: number
+}) {
   const { stdout } = useStdout()
+  const { internal_eventEmitter: inputEvents } = useStdin()
+  const [, onResize] = React.useReducer((revision: number) => revision + 1, 0)
+  React.useEffect(() => {
+    stdout.on('resize', onResize)
+    return () => { stdout.off('resize', onResize) }
+  }, [stdout, onResize])
   const width = stdout.columns && stdout.columns > 0 ? stdout.columns : 80
   const rows = stdout.rows && stdout.rows > 0 ? stdout.rows : 24
-  const height = Math.max(MIN_HEIGHT, rows - (details ? 2 : FIXED_ROWS))
+  // Leave one spare row alongside the transcript header and footer. Ink
+  // clears the entire screen on each update when its frame fills the terminal.
+  const height = Math.max(details || menuRows > 0 ? 1 : MIN_HEIGHT, rows - (details ? 3 : reservedRows + menuRows))
   const items = React.useMemo(() => view.partial === undefined ? view.items : [...view.items, ...view.partial], [view.items, view.partial])
 
-  // Track which tool rows are expanded; Ctrl+O toggles all.
-  const groups = React.useMemo(() => foldRows(view.items).filter(row => row.tools !== undefined).length, [view.items])
-  const [expanded, setExpanded] = React.useState<boolean[]>([])
-  React.useEffect(() => {
-    setExpanded((prev) => {
-      if (prev.length === groups) return prev
-      return Array(groups).fill(false) as boolean[]
-    })
-  }, [groups])
-
+  const [expanded, setExpanded] = React.useState(false)
   const lines = React.useMemo(() => layoutItems(items, width, expanded, details), [items, width, expanded, details])
   const total = lines.length
-  const maxOffset = Math.max(0, total - height)
+  const tail = Math.max(0, total - height)
+  // When browsing history, anchor the top row to the start of the transcript.
+  // A bottom-relative offset would move that row each time new output arrived.
+  const [historyTop, setHistoryTop] = React.useState<number>()
+  const offset = Math.max(0, tail - (historyTop ?? tail))
 
-  // Offset from the bottom in lines; 0 pins to the newest content.
-  const [offset, setOffset] = React.useState(0)
-  // Synchronous mirror so rapid PgUp/PgDn presses fold against the latest
-  // offset instead of a stale render closure.
-  const offsetRef = React.useRef(offset)
-  React.useEffect(() => { offsetRef.current = offset })
   React.useEffect(() => {
-    // Clamp when content shrinks; when pinned, stay pinned as content grows.
-    setOffset(o => Math.min(o, maxOffset))
-  }, [maxOffset])
+    if (!details) return
+    // Ink 5 recognizes End but does not expose it in the useInput key map.
+    const onInput = (input: string) => {
+      if (/^\x1b(?:\[(?:F|[48]~)|OF)$/u.test(input)) setHistoryTop(undefined)
+    }
+    inputEvents.on('input', onInput)
+    return () => { inputEvents.off('input', onInput) }
+  }, [details, inputEvents])
 
   useInput((rawInput, key) => {
     if (key.ctrl && rawInput === 'o') {
-      setExpanded(runs => runs.map(expanded => !expanded))
+      setExpanded(open => !open)
       return
     }
-    // Mouse wheel (SGR mouse mode): wheel up scrolls back, wheel down toward
-    // the newest content, one viewport per event.
     const wheel = parseMouseWheel(rawInput)
-    if (wheel !== 0) {
-      const next = wheel > 0 ? Math.min(maxOffset, offsetRef.current + height) : Math.max(0, offsetRef.current - height)
-      if (next !== offsetRef.current) setOffset(next)
-      return
-    }
-    const next = scrollStep(offsetRef.current, key, height, maxOffset)
-    if (next !== offsetRef.current) setOffset(next)
+    const pageUp = key.pageUp || wheel > 0 || (details && key.upArrow)
+    const pageDown = key.pageDown || wheel < 0 || (details && key.downArrow)
+    if (!pageUp && !pageDown) return
+    const step = key.upArrow || key.downArrow ? 1 : height
+    setHistoryTop((previous) => {
+      const next = scrollStep(Math.max(0, tail - (previous ?? tail)), { pageUp, pageDown }, step, tail)
+      return next === 0 ? undefined : tail - next
+    })
   })
 
   const [start, end] = viewportSlice(total, height, offset)
   const visible = lines.slice(start, end)
 
   return (
-    <Box flexDirection="column" height={height}>
-      {visible.length === 0
-        ? <Text dimColor>No messages yet — type a prompt below.</Text>
-        : visible.map((line, index) => (
-          <Box key={`line-${start + index}`} height={1} flexDirection="row">
-            {line.runs.length === 0
-              ? <Text> </Text>
-              : line.runs.map((run, runIndex) => <StyledText key={runIndex} run={run} />)}
-          </Box>
-        ))}
+    <Box flexDirection="column">
+      <Box flexDirection="column" height={height}>
+        {visible.length === 0
+          ? <Text dimColor wrap="truncate-end">{details ? 'No activity yet.' : 'No messages yet — type a prompt below.'}</Text>
+          : visible.map((line, index) => (
+            <Box key={`line-${start + index}`} height={1} flexDirection="row">
+              {line.runs.length === 0
+                ? <Text> </Text>
+                : line.runs.map((run, runIndex) => <StyledText key={runIndex} run={run} />)}
+            </Box>
+          ))}
+      </Box>
+      {details && (
+        <Text dimColor wrap="truncate-end">
+          {historyTop === undefined ? 'Following' : 'Paused'} · End latest · ↑↓ / PgUp PgDn · Ctrl+O output · Ctrl+T / Esc back
+        </Text>
+      )}
     </Box>
   )
 }

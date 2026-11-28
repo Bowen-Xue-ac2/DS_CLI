@@ -1,4 +1,4 @@
-import { mkdtemp, rm, stat } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -43,6 +43,43 @@ it('requires a terminal for bare dsh instead of starting a compatibility profile
     expect(result.exitCode).toBe(1)
     expect(result.stderr).toContain('requires an interactive terminal')
     await expect(stat(home)).rejects.toMatchObject({ code: 'ENOENT' })
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+it('recovers only a dead recorded Host and keeps its persisted data', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'ds-cli-recovery-'))
+  const home = join(root, 'home')
+  const host = join(home, 'ds-cli-host-0.2')
+  const directory = join(host, '.terminal-host')
+  const file = join(directory, 'state.json')
+  const lease = join(directory, 'lease')
+  const data = join(host, 'fixture-session.jsonl')
+  const generation = 'd1000000-0000-0000-0000-000000000000'
+  const departed = await execa(process.execPath, ['-p', 'process.pid'], { cwd: root })
+  const deadPid = Number(departed.stdout)
+  const state = { version: 1, generation, supervisorPid: process.pid, pid: deadPid,
+    runtime: 'fixture-runtime', patches: [], phase: 'ready', controlPort: 12345, credentials: '' }
+  const command = () => execa(process.execPath, [bin, 'host', 'recover'], {
+    cwd: root, env: { DSH_HOME: home }, reject: false, timeout: 15_000,
+  })
+  try {
+    await mkdir(directory, { recursive: true })
+    await writeFile(data, 'persisted session')
+    await writeFile(lease, '')
+    await writeFile(file, JSON.stringify(state))
+    const refused = await command()
+    expect(refused.exitCode).toBe(1)
+    expect(refused.stderr).toContain('both processes exited')
+    expect(JSON.parse(await readFile(file, 'utf8'))).toEqual(state)
+    await writeFile(file, JSON.stringify({ ...state, supervisorPid: deadPid }))
+    const answers = await Promise.all([command(), command()])
+    expect(answers.some(result => result.stdout.includes('"status":"recovered"'))).toBe(true)
+    await expect(stat(file)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(stat(lease)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await readFile(data, 'utf8')).toBe('persisted session')
+    expect((await command()).stdout).toBe('{"status":"stopped"}')
   } finally {
     await rm(root, { recursive: true, force: true })
   }

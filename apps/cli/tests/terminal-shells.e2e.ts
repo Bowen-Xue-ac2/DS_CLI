@@ -98,7 +98,7 @@ it.runIf(process.platform === 'win32').each(['pwsh.exe', 'bash.exe'] as const)(
       await fresh.until('● ' + (next.name ?? next.id))
       fresh.send('\r')
       await fresh.until('Workspace 项目 B')
-      await fresh.until('mode: ' + next.id)
+      await fresh.until('read-only on · ' + next.id)
       await fresh.until('read-only on')
       fresh.send('/permission workspace-write\r')
       await fresh.until('workspace-write on')
@@ -113,7 +113,7 @@ it.runIf(process.platform === 'win32').each(['pwsh.exe', 'bash.exe'] as const)(
       const resumed = open(b, '--resume ' + sessionId)
       await resumed.until('Workspace 项目 B')
       await resumed.until(sessionId)
-      await resumed.until('mode: ' + next.id)
+      await resumed.until('workspace-write on · ' + next.id)
       await resumed.until('workspace-write on')
       await resumed.until('Reply from the chosen Agent.')
       const requestsBeforeNavigation = server.requests.length

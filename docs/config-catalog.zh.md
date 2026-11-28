@@ -696,10 +696,14 @@ export interface Config {
 export interface Config {
   /** The prompt text for the single run. */
   task: string
+  /** Resume a saved headless Session in its original working directory. */
+  sessionId?: string
+  /** Emit committed events as JSON Lines. */
+  json?: boolean
 }
 ```
 
-来源：[`packages/bundle/headless/src/index.ts:31`](../packages/bundle/headless/src/index.ts)
+来源：[`packages/bundle/headless/src/index.ts:32`](../packages/bundle/headless/src/index.ts)
 
 <a id="deepseek-aidsh-hooks-claude-code"></a>
 

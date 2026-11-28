@@ -3,14 +3,15 @@ import { projectTerminalActivity } from '../src/terminal-activity.ts'
 
 it('joins out-of-order call and result frames once and uses the committed timing', () => {
   const start = { seq: 4, time: 100, type: 'tool/call', data: {
-    callId: 'shared', name: 'read', turn: 1, step: 1, arguments: '{"path":"source.txt"}',
+    callId: 'shared', name: 'read', turn: 1, step: 1, arguments: '{"path":"source.txt","description":"Read the fixture"}',
   } }
   const finish = { seq: 5, time: 138, type: 'tool/result', data: {
     turn: 1, step: 1, message: { toolCallId: 'shared', content: [{ type: 'text', text: 'FILE_RESULT' }] },
   } }
   const [item, ...duplicates] = projectTerminalActivity([finish, start, finish, start])
   expect(duplicates).toEqual([])
-  expect(item).toMatchObject({ callId: 'shared', name: 'read', state: 'succeeded', durationMs: 38, output: 'FILE_RESULT' })
+  expect(item).toMatchObject({ callId: 'shared', name: 'read', state: 'succeeded', durationMs: 38, output: 'FILE_RESULT',
+    summary: 'Read the fixture' })
 })
 
 it('keeps repeated provider call IDs in separate steps and records cancellation and denial', () => {

@@ -72,6 +72,67 @@ function fileChoice(label: string, scope: string): readonly CliCompletionItem[] 
 }
 
 describe('completion lifetime', () => {
+  it.each(['/', '@', '$'])('reopens %s after Escape, clear and retyping', async (trigger) => {
+    const completion: CliCompletionSource = Object.assign(async () => fileChoice('option', 'test'), {
+      initial: () => fileChoice('option', 'test'),
+    })
+    const changed = vi.fn()
+    function Draft() {
+      const [value, setValue] = React.useState(trigger)
+      return <CliTextInput value={value} onChange={(next) => { changed(next); setValue(next) }}
+        onSubmit={() => {}} completion={completion} />
+    }
+    const rendered = render(<Draft />)
+    try {
+      await vi.waitFor(() => {
+        expect(rendered.lastFrame()).toContain('option')
+        expect(rendered.stdin.listenerCount('readable')).toBeGreaterThan(0)
+      })
+      rendered.stdin.write('\x1b')
+      await vi.waitFor(() => { expect(rendered.lastFrame()).not.toContain('option') })
+      expect(rendered.lastFrame()).toContain(trigger)
+      rendered.stdin.write('\x7f')
+      await vi.waitFor(() => {
+        expect(changed).toHaveBeenLastCalledWith('')
+        expect(rendered.lastFrame()?.trim()).toBe('')
+      })
+      rendered.stdin.write(trigger)
+      await vi.waitFor(() => { expect(rendered.lastFrame()).toContain('option') })
+    } finally {
+      rendered.unmount()
+    }
+  })
+
+  it('opens a local category before the Host responds and keeps an incomplete reference in the draft', async () => {
+    const reply = Promise.withResolvers<readonly CliCompletionItem[]>()
+    const lookup = vi.fn<CliCompletionSource>(() => reply.promise)
+    const completion: CliCompletionSource = Object.assign(lookup, {
+      initial: (match: { query: string }): readonly CliCompletionItem[] => match.query === '' ? [
+        { id: 'file', kind: 'category', label: 'Files', insert: '@file:', scope: 'workspace' },
+      ] : [],
+    })
+    const submit = vi.fn()
+    function Draft() {
+      const [value, setValue] = React.useState('Inspect @')
+      return <CliTextInput value={value} onChange={setValue} onSubmit={submit} completion={completion} />
+    }
+    const rendered = render(<Draft />)
+    try {
+      await vi.waitFor(() => {
+        expect(rendered.lastFrame()).toContain('› Files')
+        expect(rendered.stdin.listenerCount('readable')).toBeGreaterThan(0)
+      })
+      rendered.stdin.write('\r')
+      await vi.waitFor(() => { expect(rendered.lastFrame()).toContain('Inspect @file:') })
+      await vi.waitFor(() => { expect(lookup.mock.calls.some(([match]) => match.query === 'file:')).toBe(true) })
+      rendered.stdin.write('\r')
+      expect(submit).not.toHaveBeenCalled()
+    } finally {
+      rendered.unmount()
+      reply.resolve([])
+    }
+  })
+
   it('cancels an in-flight lookup on Escape and preserves the draft', async () => {
     const reply = Promise.withResolvers<readonly CliCompletionItem[]>()
     const completion = vi.fn<CliCompletionSource>(() => reply.promise)

@@ -59,6 +59,30 @@ function fits(name: string, query: string): boolean {
   return true
 }
 
+const REFERENCE_CATEGORIES = [
+  ['file', 'Files', 'Find files and folders'],
+  ['session', 'Sessions', 'Reference a saved conversation'],
+  ['agent', 'Agents', 'Start with a different Agent'],
+  ['connector', 'Connectors', 'Select an MCP service'],
+  ['plugin', 'Plugins', 'Find enabled plugins'],
+] as const
+
+/** @param match - active trigger. @param scope - receiving context. @returns local completion rows. */
+export function initialTerminalCompletions(match: TriggerMatch, scope: string): readonly CliCompletionItem[] {
+  if (match.trigger === '/') {
+    return terminalShortcuts(match.query).map(([name, detail]) => ({
+      id: name, kind: 'command', label: '/' + name, insert: '/' + name, detail, scope,
+    }))
+  }
+  if (match.query !== '') return []
+  if (match.trigger === '$') return [{
+    id: 'all', kind: 'category', label: 'Browse skills', insert: '$all:', scope,
+  }]
+  return REFERENCE_CATEGORIES.map(([id, label, detail]) => ({
+    id, kind: 'category', label, insert: `@${id}:`, detail, scope,
+  }))
+}
+
 /**
  * Return skill or reference candidates without submitting or executing anything.
  * @param host - the attached Host.
@@ -75,20 +99,18 @@ export async function terminalCompletions(
   const scope = terminalComposerScope(session)
   const lifetime = AbortSignal.any([host.signal, signal])
   const sessionId = session.sessionId
-  if (match.trigger === '/') {
-    return terminalShortcuts(match.query).map(([name, detail]) => ({
-      id: name, kind: 'command', label: '/' + name, insert: '/' + name, detail, scope,
-    }))
-  }
+  const initial = initialTerminalCompletions(match, scope)
+  if (match.trigger === '/' || (match.trigger === '@' && match.query === '')) return initial
   if (match.trigger === '$') {
     const { skills } = requireHostResult(await host.remote.skills.list({ sessionId }, lifetime))
-    const prefix = match.query.toLowerCase()
-    return skills.filter(skill => fits(skill.name, prefix))
+    const prefix = match.query.replace(/^all:/u, '').toLowerCase()
+    const choices = skills.filter(skill => fits(skill.name, prefix))
       .sort((a, b) => Number(b.name.toLowerCase().startsWith(prefix)) - Number(a.name.toLowerCase().startsWith(prefix)))
       .map(skill => ({
-        id: skill.name, kind: 'skill', label: '$' + skill.name, insert: '/' + skill.name, scope,
-        detail: skill.path === undefined ? skill.description : `${skill.description} · ${skill.path}`,
+        id: skill.name, kind: 'skill' as const, label: '$' + skill.name, insert: '$' + skill.name, scope,
+        detail: skill.description,
       }))
+    return [...initial, ...choices]
   }
   if (/^plugin:/iu.test(match.query)) {
     const query = match.query.slice(7)
@@ -98,32 +120,33 @@ export async function terminalCompletions(
         detail: [...plugin.commands.map(name => '/' + name), ...plugin.skills.map(name => '$' + name)].join(' · '),
       }))
   }
-  const connectorQuery = /^connector:/iu.test(match.query)
-  const agentQuery = match.query.replace(/^agent:/iu, '')
-  const { presets } = connectorQuery ? { presets: [] } : requireHostResult(await host.remote.agentPresets.list())
+  const category = /^(file|session|agent|connector):/iu.exec(match.query)?.[1]?.toLowerCase()
+  const query = category === undefined ? match.query : match.query.slice(category.length + 1)
+  const connectorQuery = category === 'connector'
+  const { presets } = category === undefined || category === 'agent' ? requireHostResult(await host.remote.agentPresets.list()) : { presets: [] }
   lifetime.throwIfAborted()
   const agents: CliCompletionItem[] = presets
-    .filter(preset => fits(preset.id, agentQuery) || fits(preset.name ?? '', agentQuery))
+    .filter(preset => fits(preset.id, query) || fits(preset.name ?? '', query))
     .map(preset => ({
       id: preset.id, kind: 'agent', scope,
       label: preset.name ?? preset.id, insert: '@agent:' + preset.id,
       detail: preset.broken ?? 'New session with this Agent',
       disabled: preset.broken !== undefined,
     }))
-  if (/^agent:/iu.test(match.query)) return agents
+  if (category === 'agent') return agents
   const { items } = requireHostResult(await host.remote.session.list({}, lifetime))
   if (!items.some(item => item.sessionId === sessionId && item.agentAvailable)) return agents
-  const connectorFilter = match.query.replace(/^connector:/iu, '')
+  const connectorFilter = query
   const [servers, files, references] = await Promise.all([
-    listTerminalConnectors(host, sessionId, lifetime).then(
+    category === undefined || connectorQuery ? listTerminalConnectors(host, sessionId, lifetime).then(
       rows => ({ rows }),
       (error: unknown) => {
         if (connectorQuery || lifetime.aborted) throw error
-        return { rows: [], unavailable: true }
+        return { rows: [] }
       },
-    ),
-    connectorQuery ? undefined : host.remote.fileReferences.list(sessionId, match.query, lifetime),
-    connectorQuery ? undefined : host.remote.sessionReferenceResolver.candidates(sessionId, match.query, lifetime),
+    ) : { rows: [] },
+    category === undefined || category === 'file' ? host.remote.fileReferences.list(sessionId, query, lifetime) : undefined,
+    category === undefined || category === 'session' ? host.remote.sessionReferenceResolver.candidates(sessionId, query, lifetime) : undefined,
   ])
   const resourceSeparator = connectorQuery ? connectorFilter.indexOf('/') : -1
   let connectors: CliCompletionItem[]
@@ -145,12 +168,6 @@ export async function terminalCompletions(
       detail: server.origin === 'host' ? 'MCP connector · Host' : 'MCP connector · Agent',
       connectionGeneration: server.generation,
     }))
-  }
-  if ('unavailable' in servers && match.query === '') {
-    connectors.push({
-      id: ':unavailable', kind: 'connector', scope, label: 'MCP connectors unavailable',
-      insert: '', detail: 'Type @connector: to retry', disabled: true,
-    })
   }
   return [
     ...agents,

@@ -1,6 +1,30 @@
 /** Locate and reopen ordinary conversations through the pinned Host. @module @deepseek-ai/dsh/terminal-sessions */
+import { createHash } from 'node:crypto'
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { writeFileAtomic } from '@deepseek-ai/dsh-atomic-write'
 import { requireHostResult, type TerminalHost, type TerminalSessionAddress } from './terminal-host.ts'
 import { changeDirectory, type TerminalActiveSession } from './terminal-start.ts'
+import { terminalHostPaths } from './terminal-host-state.ts'
+
+function branchOriginPath(sessionId: string): string {
+  return join(terminalHostPaths(process.env).directory, 'branches', createHash('sha256').update(sessionId).digest('hex'))
+}
+
+/** @param sessionId - fork produced by rc.5. @param parentId - Session the terminal forked. */
+export async function recordTerminalBranch(sessionId: string, parentId: string): Promise<void> {
+  await writeFileAtomic(branchOriginPath(sessionId), parentId, { mode: 0o600, dirMode: 0o700 })
+}
+
+/** @param sessionId - attached fork. @returns the source recorded by the terminal, if present. */
+export async function readTerminalBranch(sessionId: string): Promise<string | undefined> {
+  try {
+    return await readFile(branchOriginPath(sessionId), 'utf8')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+    throw error
+  }
+}
 
 /** One visible conversation in the selection menu. */
 export interface TerminalSessionChoice {

@@ -15,7 +15,7 @@ it('lists and reopens named sessions from the correct workspace without creating
   const b = join(root, '项目 B')
   await Promise.all([mkdir(a), mkdir(b)])
   const key = 'ds-cli-navigation-fixture'
-  const model = await startMockLlmServer({ apiKey: key, sequence: ['success', 'stall'], repeatLast: true, successText: 'NAVIGATION_RESULT' })
+  const model = await startMockLlmServer({ apiKey: key, sequence: ['success', 'success', 'stall'], repeatLast: true, successText: 'NAVIGATION_RESULT' })
   const env = await terminalFixtureEnv(join(root, 'home'), model.baseURL, key)
   try {
     const { stdout } = await execa(process.execPath, ['--input-type=module', '--eval', `
@@ -52,6 +52,22 @@ it('lists and reopens named sessions from the correct workspace without creating
         const page = requireHostResult(await host.remote.session.page({ address, beforeSeq: finishedSeq }, signal))
         const fork = requireHostResult(await host.remote.session.fork({ sessionId: reopened.sessionId, allowMigration: false }))
         const branch = await loadTerminalSession(host, fork.sessionId, signal)
+        const branchAddress = { kind: 'session', sessionId: branch.sessionId }
+        const branchStream = host.remote.session.follow({ address: branchAddress, activate: true }, signal)[Symbol.asyncIterator]()
+        await branchStream.next()
+        requireHostResult(await host.remote.session.prompt({
+          sessionId: branch.sessionId, requestId: 'branch-message', mode: 'queue',
+          content: [{ type: 'text', text: 'NAVIGATION_BRANCH_ONLY' }],
+        }, signal))
+        let branchEnd
+        while (branchEnd === undefined) {
+          const next = await branchStream.next()
+          if (next.done) throw new Error('Branch stream ended before turn completion')
+          if (next.value.type === 'event' && next.value.event.type === 'turn/end') branchEnd = next.value.event.seq
+        }
+        await branchStream.return()
+        const branchHistory = requireHostResult(await host.remote.session.page({ address: branchAddress, beforeSeq: branchEnd }, signal))
+        const originalHistory = requireHostResult(await host.remote.session.page({ address, beforeSeq: Number.MAX_SAFE_INTEGER }, signal))
         requireHostResult(await send('nav-second', 'KEEP_THIS_TURN_RUNNING'))
         for (;;) {
           signal.throwIfAborted()
@@ -65,18 +81,20 @@ it('lists and reopens named sessions from the correct workspace without creating
         requireHostResult(await host.remote.workspace.unarchiveSession({ sessionId: reopened.sessionId }))
         requireHostResult(await host.remote.workspace.pinSession({ sessionId: reopened.sessionId }))
         const pinned = await listTerminalSessions(host, {}, signal)
-        console.log(JSON.stringify({ before, search, reopened, count, branch, page, denied, archive, pinned }))
+        console.log(JSON.stringify({ before, search, reopened, count, branch, page, branchHistory, originalHistory, denied, archive, pinned }))
       } finally {
         await host.dispose()
       }
     `], { cwd: a, env, timeout: 55_000 })
-    const { before, search, reopened, count, branch, page, denied, archive, pinned } = JSON.parse(stdout)
+    const { before, search, reopened, count, branch, page, branchHistory, originalHistory, denied, archive, pinned } = JSON.parse(stdout)
     expect(before).toEqual([expect.objectContaining({ address: { kind: 'session', sessionId: 'session-nav-a' }, title: 'Refactor A' })])
     expect(search).toEqual([expect.objectContaining({ address: { kind: 'session', sessionId: 'session-nav-b' }, title: 'Release B' })])
     expect(reopened).toMatchObject({ sessionId: 'session-nav-b', workspace: { path: b }, cwd: b })
     expect(count).toBe(2)
     expect(branch.workspace.path).toBe(b)
     expect(branch.sessionId).not.toBe(reopened.sessionId)
+    expect(JSON.stringify(branchHistory)).toContain('NAVIGATION_BRANCH_ONLY')
+    expect(JSON.stringify(originalHistory)).not.toContain('NAVIGATION_BRANCH_ONLY')
     expect(page.records.some((record: { event: { type: string } }) => record.event.type === 'user/message')).toBe(true)
     expect(denied).toMatchObject({ ok: false, error: { code: 'workspace/session-active' } })
     expect(archive).toEqual([expect.objectContaining({ address: { kind: 'session', sessionId: reopened.sessionId } })])

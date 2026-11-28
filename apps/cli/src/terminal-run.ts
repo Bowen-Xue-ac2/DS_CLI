@@ -4,7 +4,7 @@
  */
 import { randomUUID } from 'node:crypto'
 import { realpath, stat } from 'node:fs/promises'
-import { dirname, relative, resolve } from 'node:path'
+import { dirname, join, relative, resolve } from 'node:path'
 import { stripVTControlCharacters } from 'node:util'
 import { Command, CommanderError } from 'commander'
 import {
@@ -20,8 +20,8 @@ import {
   type TerminalActiveSession, type TerminalAgentPreset, type TerminalStartIntent,
 } from './terminal-start.ts'
 import { permissionCatalog, permissionRevision, setDefaultPermission, setSessionPermission } from './terminal-permissions.ts'
-import { listTerminalSessions, loadTerminalSession } from './terminal-sessions.ts'
-import { terminalCompletions, terminalComposerScope, validateTerminalReferences } from './terminal-composer.ts'
+import { listTerminalSessions, loadTerminalSession, readTerminalBranch, recordTerminalBranch } from './terminal-sessions.ts'
+import { initialTerminalCompletions, terminalCompletions, terminalComposerScope, validateTerminalReferences } from './terminal-composer.ts'
 import { LOCAL_COMMANDS, resolveTerminalSubmission } from './terminal-commands.ts'
 import { listTerminalConnectors, prepareConnectorPrompt, runMcpCommand } from './terminal-connectors.ts'
 import { TerminalMcpResources } from './terminal-mcp-resources.ts'
@@ -35,6 +35,8 @@ import { TerminalAutomation } from './terminal-automation.ts'
 import { openTerminalBrowser, requestTerminalBrowser } from './terminal-browser.ts'
 import { preparePluginReferences } from './terminal-plugin-catalog.ts'
 import { runTerminalWorktree } from './terminal-worktrees.ts'
+import { terminalHostPaths } from './terminal-host-state.ts'
+import { TerminalDrafts } from './terminal-drafts.ts'
 
 const INITIAL_VIEW: CliViewState = {
   items: [], busy: false, sessionId: '', permission: '', inputLocked: true,
@@ -446,6 +448,7 @@ function showEvent(view: ReturnType<typeof createView>, event: TerminalSessionEv
       const card: CliViewItem = {
         kind: 'tool', callId: activity.key, name: activity.name,
         state: activity.state === 'succeeded' ? 'done' : activity.state === 'failed' ? 'error' : activity.state,
+        ...(activity.summary === undefined ? {} : { summary: activity.summary }),
         ...(activity.diagnostic === undefined ? {} : { error: activity.diagnostic }),
         ...(activity.durationMs === undefined ? {} : { durationMs: activity.durationMs }),
         ...(activity.output === undefined ? {} : { output: activity.output }),
@@ -464,6 +467,11 @@ function showEvent(view: ReturnType<typeof createView>, event: TerminalSessionEv
     case 'compaction/end':
       view.notice(typeof data.error === 'string' ? 'Context compaction failed' : 'Context compacted')
       return
+    case 'compaction/summary': {
+      const summary = messageText(data.summary)
+      if (summary) view.notice('Context summary\n' + stripVTControlCharacters(summary))
+      return
+    }
     case 'tool-workflow/run-start':
       view.notice(`Workflow ${String(data.name ?? data.runId ?? '')} · started`)
       return
@@ -517,11 +525,17 @@ export async function runTerminal(args: readonly string[], patches: readonly str
     requestId: string
   }>()
   let approvalTarget: string | undefined
+  const drafts = new TerminalDrafts(join(terminalHostPaths(process.env).directory, 'drafts'),
+    (error) => { view.notice('Draft save: ' + message(error)) })
   const io = createInteractiveIo({
     view,
-    async completion(match, signal) {
-      return host === undefined || current === undefined ? [] : terminalCompletions(host, current, match, mcpResources, signal)
-    },
+    onDraftChange: (sessionId, text) => { drafts.save(sessionId, text) },
+    completion: Object.assign(
+      async (match: Parameters<typeof terminalCompletions>[2], signal: AbortSignal) =>
+        host === undefined || current === undefined ? [] : terminalCompletions(host, current, match, mcpResources, signal),
+      { initial: (match: Parameters<typeof terminalCompletions>[2]) =>
+        current === undefined ? [] : initialTerminalCompletions(match, terminalComposerScope(current)) },
+    ),
     onCancel() {
       if (cancelOperation !== undefined) { cancelOperation(); return }
       if (current !== undefined && host !== undefined) {
@@ -555,14 +569,14 @@ export async function runTerminal(args: readonly string[], patches: readonly str
       return result.values
     }
 
-    async function enqueuePrompt(sessionId: string, text: string, withAttachments = false): Promise<void> {
+    async function submitPrompt(sessionId: string, text: string, withAttachments = false, mode: 'queue' | 'steer' = 'queue'): Promise<void> {
       const attachments = withAttachments ? assets.pending(sessionId).map(item => item.part) : []
-      const identity = JSON.stringify([text, ...attachments])
+      const identity = JSON.stringify([mode, text, ...attachments])
       const open = unacknowledged.get(sessionId)
       const requestId = open?.text === identity ? open.requestId : randomUUID()
       unacknowledged.set(sessionId, { text: identity, requestId })
       requireHostResult(await remote.session.prompt({
-        sessionId, requestId, mode: 'queue', content: [{ type: 'text', text }, ...attachments],
+        sessionId, requestId, mode, content: [{ type: 'text', text }, ...attachments],
       }, signal))
       unacknowledged.delete(sessionId)
       if (withAttachments) assets.clear(sessionId)
@@ -637,6 +651,8 @@ export async function runTerminal(args: readonly string[], patches: readonly str
         permission: state.permissions?.currentValue ?? '', mode: state.agentPreset ?? session.agentPreset,
         items: [], stats: INITIAL_VIEW.stats, busy: false, inputLocked: false, progress: undefined, partial: undefined,
       })
+      const savedDraft = await drafts.load(attached.sessionId)
+      if (savedDraft) io.restoreSubmission({ sessionId: attached.sessionId, text: savedDraft, selections: [] })
       consuming = (async () => {
         for await (const frame of remote.session.follow({
           address: { kind: 'session', sessionId: session.sessionId }, activate: true, assistantStream: true,
@@ -645,6 +661,11 @@ export async function runTerminal(args: readonly string[], patches: readonly str
           if (frame.type === 'snapshot') {
             historyBefore = frame.hasMore ? frame.records[0]?.event.seq : undefined
             usageWindowed = frame.hasMore
+            if (frame.header.isSeeded && frame.header.origin !== 'subagent') {
+              const parent = frame.header.parentSession ?? await readTerminalBranch(session.sessionId)
+                .catch(() => undefined)
+              view.notice(parent === undefined ? 'Branch with inherited history' : 'Branch from ' + stripVTControlCharacters(parent))
+            }
             for (const entry of frame.records) display(entry.event)
             const opening = frame.assistantStream?.activeAttempt
             if (opening !== undefined) {
@@ -850,7 +871,9 @@ export async function runTerminal(args: readonly string[], patches: readonly str
             validateTerminalReferences(activeHost, session, submission.selections, signal),
           ])
           const prepared = await preparePluginReferences(activeHost, session.sessionId, text, submission.selections, signal)
-          await enqueuePrompt(session.sessionId, prepared, true)
+          const queued = view.getSnapshot().busy
+          await submitPrompt(session.sessionId, prepared, true)
+          if (queued) view.notice('Message accepted for the next turn')
           continue
         }
         if (routed.kind === 'host-command') {
@@ -861,11 +884,24 @@ export async function runTerminal(args: readonly string[], patches: readonly str
         if (action === '/exit' || action === '/quit') break
         switch (action) {
           case '/help':
-            view.notice('/session [query]  /usage  /status  /ps  ·  Ctrl+T opens the transcript  ·  $ finds Skills')
-            view.notice('/sessions [query]  /resume [id]  /new  /workspace  /cd [path]  /history  /fork  /rename  /archive  /unarchive  /pin  /unpin  /agent  /agents  /team  /permission  /mcp  /plugins  /clear  /exit')
-            view.notice('/files [list|view|search]  /attach [path|clear]  /diff [file-number [page]]  /export <output.md|output.zip>')
-            view.notice('/worktree  /browser')
-            view.notice('/jobs [id|follow|stop|detach]  /schedule [create|pause|resume|run|history]  /terminal [new|list|close|id]')
+            view.notice([
+              '/  Commands · /session  /usage  /status  /ps · Type a name to find more',
+              '@  References · Files, Sessions, Agents, Connectors, Plugins',
+              '$  Skills · Choose a skill and add your task',
+              '↑/↓ Select · Enter Choose · Tab Complete · Esc Close · Ctrl+T Transcript',
+              '/steer <instruction> · Add to current work at the next step · /cancel · Stop the active turn',
+            ].join('\n'))
+            break
+          case '/steer':
+            if (!arg?.trim()) throw new Error('Usage: /steer <instruction>')
+            if (!view.getSnapshot().busy) throw new Error('There is no active turn to steer.')
+            if (arg.trimStart().startsWith('/')) throw new Error('Use a plain text instruction with /steer.')
+            await validateTerminalReferences(activeHost, session, submission.selections, signal)
+            await submitPrompt(session.sessionId, arg, false, 'steer')
+            view.notice('Instruction accepted for the next step')
+            break
+          case '/cancel':
+            requireHostResult(await remote.session.cancel({ sessionId: session.sessionId }))
             break
           case '/usage':
             view.notice(`Session usage${usageWindowed ? ' · recent history and live turns' : ''}\n${statsSummary(view.getSnapshot())}`)
@@ -1001,7 +1037,7 @@ export async function runTerminal(args: readonly string[], patches: readonly str
             if (server === undefined) throw new Error('MCP resource tools are unavailable for that connector in this session.')
             if (resourceAction === 'resources') mcpResources.begin(session.sessionId, server)
             const tool = resourceAction === 'templates' ? 'list_mcp_resource_templates' : 'list_mcp_resources'
-            await enqueuePrompt(session.sessionId,
+            await submitPrompt(session.sessionId,
               `List ${resourceAction} on MCP server ${JSON.stringify(server.id)} using ${tool}. Summarize the available names and URIs.`)
             break
           }
@@ -1031,6 +1067,9 @@ export async function runTerminal(args: readonly string[], patches: readonly str
           }
           case '/fork': {
             const fork = requireHostResult(await remote.session.fork({ sessionId: session.sessionId, allowMigration: false }))
+            await recordTerminalBranch(fork.sessionId, session.sessionId).catch((error) => {
+              view.notice('Branch origin: ' + message(error))
+            })
             await attach(await loadTerminalSession(activeHost, fork.sessionId, signal))
             break
           }
@@ -1163,5 +1202,6 @@ export async function runTerminal(args: readonly string[], patches: readonly str
     detachApprovals?.()
     await host?.dispose()
     await consuming
+    await drafts.flush()
   }
 }

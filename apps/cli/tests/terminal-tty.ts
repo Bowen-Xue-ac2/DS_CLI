@@ -21,6 +21,7 @@ interface Pty {
   onData(receive: (data: string) => void): void
   onExit(receive: (status: { readonly exitCode: number }) => void): void
   write(text: string): void
+  resize(columns: number, rows: number): void
   kill(): void
   readonly pid: number
 }
@@ -59,6 +60,7 @@ export function launch(
       }, { timeout, interval: 30 })
     },
     send: (text: string) => { pty.write(text) },
+    resize: (columns: number, rows: number) => { pty.resize(columns, rows) },
     hangup: () => { pty.kill() },
     exit: async () => {
       if (!closed) {

@@ -22,6 +22,10 @@ export const HEADLESS_STARTUP_SERVICE = 'headlessStartup'
 export interface HeadlessStartupValues {
   /** The task text this invocation asked for. */
   task: string
+  /** Exact identity of a saved Session from the same directory. */
+  sessionId?: string
+  /** Emit newline-delimited JSON records on stdout. */
+  json?: boolean
 }
 
 /**
@@ -33,6 +37,8 @@ function headlessCommand(): Command {
     .name('dsh --profile headless')
     .description('Answer one task, print the final assistant message, and exit.')
     .helpOption('-h, --help', 'show this help')
+    .option('--session-id <id>', 'resume a saved headless session in this directory')
+    .option('--json', 'write newline-delimited JSON records')
     .argument('[task...]', 'the task text; multiple words are joined by spaces')
     .addHelpText('after', `
 Examples:
@@ -51,7 +57,10 @@ export function apply(ctx: Context): void {
   program.action(() => {
     const task = program.args.join(' ')
     if (task.trim() === '') program.error('error: a task is required, for example: dsh --profile headless "run the tests"')
-    ctx.provide(HEADLESS_STARTUP_SERVICE, { task } satisfies HeadlessStartupValues)
+    const { sessionId, json } = program.opts<{ sessionId?: string; json?: boolean }>()
+    ctx.provide(HEADLESS_STARTUP_SERVICE, {
+      task, ...(sessionId === undefined ? {} : { sessionId }), ...(json === true ? { json } : {}),
+    } satisfies HeadlessStartupValues)
   })
   parseCmdline(ctx, program)
 }

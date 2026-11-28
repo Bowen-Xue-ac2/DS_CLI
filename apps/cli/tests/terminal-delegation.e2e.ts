@@ -48,7 +48,7 @@ it.runIf(process.platform === 'win32').each(['pwsh.exe', 'bash.exe'] as const)(
       const confirm = pty.mark()
       pty.send('\r')
       await pty.until('PRESET_TARGET_DONE', confirm)
-      await pty.until('mode: ptc', confirm)
+      await pty.until('on · ptc', confirm)
       await pty.until('read-only on', confirm)
       const targetId = pty.output(confirm).match(/session-[\da-f-]{36}/gu)?.at(-1)
       expect(targetId).toBeDefined()

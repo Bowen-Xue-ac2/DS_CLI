@@ -1,7 +1,7 @@
 /** The ink application: frame-level rendering of the view store. */
 
 import * as React from 'react'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { render } from 'ink-testing-library'
 import { CliApp } from '../src/app.tsx'
 import type { CliViewStoreLike } from '../src/hooks/use-cli-view.ts'
@@ -17,10 +17,14 @@ const ZERO_STATS: CliViewState['stats'] = {
   inputTokens: 0, cacheReadTokens: 0, outputTokens: 0,
 }
 
-function renderApp(state: Partial<CliViewState>) {
-  return render(
-    <CliApp store={fixedStore({ items: [], busy: false, sessionId: '', stats: ZERO_STATS, ...state })} onSubmit={() => {}} onCtrlC={() => {}} onExit={() => {}} />,
+function app(state: Partial<CliViewState>) {
+  return (
+    <CliApp store={fixedStore({ items: [], busy: false, sessionId: '', stats: ZERO_STATS, ...state })} onSubmit={() => {}} onCtrlC={() => {}} onExit={() => {}} />
   )
+}
+
+function renderApp(state: Partial<CliViewState>) {
+  return render(app(state))
 }
 
 describe('CliApp', () => {
@@ -80,5 +84,36 @@ describe('CliApp', () => {
     const tail = frame.indexOf('最坏情况')
     expect(codeEnd).not.toBe(-1)
     expect(tail).toBeGreaterThan(codeEnd)
+  })
+
+  it('follows new transcript rows, holds the history window, and resumes on End', async () => {
+    const items = Array.from({ length: 32 }, (_, index) => ({ kind: 'notice' as const, text: `activity-${index}` }))
+    const state = { items, sessionId: 'session-1', busy: true, progress: 'tools' as const }
+    const rendered = renderApp(state)
+    try {
+      await vi.waitFor(() => { expect(rendered.stdin.listenerCount('readable')).toBeGreaterThan(0) })
+      rendered.stdin.write('\x14')
+      await vi.waitFor(() => { expect(rendered.lastFrame()).toContain('Transcript  ● Running tools') })
+      expect(rendered.lastFrame()).toContain('activity-21')
+      expect(rendered.lastFrame()).toContain('activity-31')
+
+      const partial = { kind: 'assistant' as const, text: 'live output', streaming: true }
+      const updated = { ...state, items: [...items, { kind: 'notice' as const, text: 'tool finished' }] }
+      rendered.rerender(app({ ...updated, partial: [partial] }))
+      await vi.waitFor(() => { expect(rendered.lastFrame()).toContain('live output') })
+      expect(rendered.lastFrame()).toContain('tool finished')
+      expect(rendered.lastFrame()).not.toContain('activity-21')
+
+      rendered.stdin.write('\x1b[5~')
+      await vi.waitFor(() => { expect(rendered.lastFrame()).toContain('Paused') })
+      const history = rendered.lastFrame()
+      rendered.rerender(app({ ...updated, partial: [{ ...partial, text: 'live output\n\nlatest output' }] }))
+      expect(rendered.lastFrame()).toBe(history)
+      rendered.stdin.write('\x1b[F')
+      await vi.waitFor(() => { expect(rendered.lastFrame()).toContain('latest output') })
+      expect(rendered.lastFrame()).toContain('Following')
+    } finally {
+      rendered.unmount()
+    }
   })
 })

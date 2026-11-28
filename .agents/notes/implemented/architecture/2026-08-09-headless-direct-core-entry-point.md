@@ -39,6 +39,8 @@ Package tests use the real Session store and Agent registry around a scripted Ag
 
 ## Consequences
 
+The headless startup provider accepts a saved session ID and a JSON Lines output mode. Resume loads the exact persisted session and checks the original working directory before Agent publication. The JSON stream projects committed Session events and writes the final record after the Session flush. Plain text remains the default output.
+
 `dsh --profile headless` provides a local Agent task rather than browser observation, Host APIs, or HTTP. Users who need those capabilities choose `dsh web`. Successful stderr is empty, completion follows durable flush, and the persisted Session remains available to later tooling. Its initial user message records `source.kind: 'user'` and therefore carries no ApiProxy `rpcId`.
 
 ApiProxy carrier coverage stays in the ApiProxy package. Custom one-shot profiles may include Host or Web bundles explicitly, while the shipped profile and the recognized installation-owned tuple are Web-free.

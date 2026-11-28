@@ -27,6 +27,8 @@ Two supporting refactors: the webserver's built-in static dist serving became th
 
 ## Consequences
 
+The installation fallback traverses dependencies from their real directories so a pnpm-linked bundle exposes its own dependency graph. The CLI installation includes the workspace peers needed by its bundled profiles.
+
 - New composition surfaces (a TUI, provider packs) ship as ordinary npm packages installable per profile; the repository no longer needs a row for every deployment shape.
 - `apps/cli` shrank to argv parsing, profile machinery consumption, and the pnpm forwarder; `AppCLIEntry` and the per-surface boot paths are gone.
 - The keyless web e2e scaffold boots the same bundle layers over the same empty-root shape as production, including the profiles module fallback, so composition drift between test and product fails loudly.

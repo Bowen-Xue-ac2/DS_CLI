@@ -12,10 +12,10 @@ DS_CLI 基于 DeepSeek Harness `0.2.2-rc.5`。在项目中启动，选好 Agent 
 
 ## 快速开始
 
-使用 Node.js 24.9+ 和 pnpm 11.7.0，从源码构建当前功能分支。
+使用 Node.js 24.9+ 和 pnpm 11.7.0，从源码构建 DS_CLI。
 
 ```sh
-git clone --branch feature/rc5-terminal-harness https://github.com/Bowen-Xue-ac2/DS_CLI.git
+git clone https://github.com/Bowen-Xue-ac2/DS_CLI.git
 cd DS_CLI
 pnpm install --frozen-lockfile
 pnpm --dir apps/cli/runtime install --frozen-lockfile
@@ -35,8 +35,10 @@ node apps/cli/lib/bin.js --choose
 | 想做什么 | 怎么操作 |
 | --- | --- |
 | 在指定目录工作 | 进入已登记项目后运行 `dsh`，或用 `dsh --choose` 自选。在聊天里用 `/workspace` 切项目、`/cd` 切工具工作目录。 |
-| 关窗后接着做 | 在原项目运行 `dsh --resume`。用 `/sessions` 找会话、`/jobs` 查会话启动的后台任务。 |
-| 给请求补充上下文 | 输入 `@` 选文件或会话，输入 `$` 选 Skill，输入 `@connector:` 选可用的 MCP 服务。用 `/plugins` 和 `/mcp` 管理扩展。 |
+| 关窗后接着做 | 在原项目运行 `dsh --resume`，恢复会话和未发送的文字。用 `/sessions` 找保存的会话，用 `/jobs` 查后台任务。 |
+| 打开命令或添加上下文 | 输入 `/` 打开常用命令，`@` 选择文件、会话、Agent、连接器或插件，`$` 选择 Skill。输入符号后菜单立即弹出。 |
+| 跟随实时进度 | Agent 运行中按 **Ctrl+T**，新活动出现时旧行自动上移。向上回看会暂停跟随，按 **End** 恢复。按 **Ctrl+O** 展开工具输出，按 **Esc** 返回聊天。 |
+| 调整正在执行的任务 | 用 `/steer <指令>` 给 Agent 的下一步追加指令。用 `/ps` 查看运行中的任务和 Shell。 |
 | 查看 Agent 做了什么 | `/activity` 查看工具调用及耗时，`/agents` 查看委派工作，`/diff` 查看 Host 最近一次改动摘要。用 `/permission` 调整会话权限。 |
 | 保持 Shell 运行 | `/terminal new` 选择 Shell，键入 `~.` 返回聊天，之后用 `/terminal` 接回。 |
 

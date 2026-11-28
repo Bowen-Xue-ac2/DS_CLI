@@ -131,6 +131,8 @@ export interface CliTextInputProps {
   completionScope?: string
   /** Remember the selected identity separately from its editable text. */
   onCompletion?(this: void, item: CliCompletionItem): void
+  /** Reserve one terminal line per visible completion row. */
+  onCompletionRows?(this: void, rows: number): void
   /** Identity of a rejected submission restored into an empty input. */
   restoreCursor?: object
 }
@@ -140,54 +142,67 @@ export interface CliTextInputProps {
  * @param props - value/onChange plus history and submit callbacks.
  */
 export function CliTextInput({
-  value, onChange, onSubmit, onHistoryUp, onHistoryDown, focus = true, completion, completionScope, onCompletion, restoreCursor,
+  value, onChange, onSubmit, onHistoryUp, onHistoryDown, focus = true,
+  completion, completionScope, onCompletion, onCompletionRows, restoreCursor,
 }: CliTextInputProps) {
   const [offset, setOffset] = React.useState(value.length)
+  if (offset > value.length) setOffset(value.length)
   const [menu, setMenu] = React.useState<{
     key: string
     items: readonly CliCompletionItem[]
     error?: string
   }>()
-  const [selected, setSelected] = React.useState(0)
+  const [selection, setSelection] = React.useState<{ key: string; index: number }>()
   const [dismissed, setDismissed] = React.useState<string>()
   const menuKey = JSON.stringify([completionScope, value, offset])
-  const active = focus && menu?.key === menuKey && dismissed !== menuKey ? menu : undefined
+  if (dismissed !== undefined && dismissed !== menuKey) setDismissed(undefined)
+  const match = focus && dismissed !== menuKey ? findTrigger(value, offset) : undefined
+  const open = match !== undefined && completion !== undefined
+  const active = !open ? undefined : menu?.key === menuKey ? menu
+    : { key: menuKey, items: completion.initial?.(match) ?? [] }
   const selectable = active?.items.filter(item => !item.disabled) ?? []
-  const picked = selectable[selected]
+  const selectedIndex = selection?.key === menuKey && selection.index < selectable.length ? selection.index : 0
+  const picked = selectable[selectedIndex]
   const first = Math.max(0, (picked === undefined || active === undefined ? 0 : active.items.indexOf(picked)) - 4)
+  const visible = active?.items.slice(first, first + 7) ?? []
+  const hint = open && visible.length === 0 ? menu?.key !== menuKey ? 'Searching…'
+    : active?.error ?? 'No matching options' : active?.error
+  React.useLayoutEffect(() => {
+    onCompletionRows?.(visible.length + Number(hint !== undefined))
+  }, [hint, onCompletionRows, visible.length])
   React.useEffect(() => {
     const match = focus && findTrigger(value, offset)
     if (!match || completion === undefined || dismissed === menuKey) return
     const controller = new AbortController()
     void completion(match, controller.signal).then((items) => {
       if (controller.signal.aborted) return
-      setSelected(0)
       setMenu({ key: menuKey, items })
     }, (error: unknown) => {
       if (controller.signal.aborted) return
-      setMenu({ key: menuKey, items: [], error: error instanceof Error ? error.message : String(error) })
+      setMenu({ key: menuKey, items: completion.initial?.(match) ?? [], error: error instanceof Error ? error.message : String(error) })
     })
     return () => controller.abort()
   }, [completion, dismissed, focus, menuKey, offset, value])
-  // Clamp the cursor when the value shrinks externally (e.g. submit clears the
-  // input), but never force it back to the end: the user's own edits drive the
-  // offset through applyKeypress and must keep the cursor where they put it.
-  React.useEffect(() => {
-    setOffset(o => Math.min(o, value.length))
-  }, [value.length])
   // Synchronous mirrors of value/offset so rapid consecutive keystrokes fold
   // against the latest state instead of a stale render closure.
   const valueRef = React.useRef(value)
   const offsetRef = React.useRef(offset)
   const focused = React.useRef(focus)
   React.useLayoutEffect(() => { focused.current = focus }, [focus])
-  React.useEffect(() => { valueRef.current = value })
-  React.useEffect(() => { offsetRef.current = offset })
+  React.useLayoutEffect(() => { valueRef.current = value }, [value])
+  React.useLayoutEffect(() => { offsetRef.current = offset }, [offset])
   React.useLayoutEffect(() => {
     if (restoreCursor === undefined) return
     offsetRef.current = value.length
     setOffset(value.length)
   }, [restoreCursor, value])
+
+  function submit(line: string): void {
+    valueRef.current = ''
+    offsetRef.current = 0
+    setOffset(0)
+    onSubmit(line)
+  }
 
   useInput((rawInput, key) => {
     if (!focused.current) return
@@ -199,7 +214,7 @@ export function CliTextInput({
     }
     if (active !== undefined && liveKey === active.key) {
       if ((key.upArrow || key.downArrow) && selectable.length > 0) {
-        setSelected(index => (index + (key.upArrow ? selectable.length - 1 : 1)) % selectable.length)
+        setSelection({ key: liveKey, index: (selectedIndex + (key.upArrow ? selectable.length - 1 : 1)) % selectable.length })
         return
       }
       if ((key.return || (key.tab && !key.shift)) && picked !== undefined) {
@@ -207,26 +222,37 @@ export function CliTextInput({
         if (match === undefined) return
         const suffix = valueRef.current.slice(match.end)
         if (key.return && picked.kind === 'command') {
-          onSubmit(applyCompletion(valueRef.current, match, picked.insert).trim())
+          submit(applyCompletion(valueRef.current, match, picked.insert).trim())
           return
         }
-        const spacer = /^\s/u.test(suffix) ? '' : ' '
+        const category = picked.kind === 'category'
+        const spacer = category || /^\s/u.test(suffix) ? '' : ' '
         const next = applyCompletion(valueRef.current, match, picked.insert + spacer)
         const nextOffset = match.start + picked.insert.length + spacer.length
-        setDismissed(JSON.stringify([completionScope, next, nextOffset]))
+        setDismissed(category ? undefined : JSON.stringify([completionScope, next, nextOffset]))
         setMenu(undefined)
         valueRef.current = next
         offsetRef.current = nextOffset
         onChange(next)
         setOffset(nextOffset)
-        if (picked.kind !== 'command') onCompletion?.(picked)
+        if (!category && picked.kind !== 'command') onCompletion?.(picked)
         return
       }
     }
     const edit = applyKeypress(rawInput, key, valueRef.current, offsetRef.current, onHistoryUp, onHistoryDown)
+    if (edit.value !== undefined || edit.offset !== undefined) setDismissed(undefined)
     if (edit.value !== undefined) { valueRef.current = edit.value; onChange(edit.value) }
+    if (edit.submit !== undefined && completion?.initial !== undefined && dismissed !== liveKey) {
+      const cursor = edit.value === undefined ? offsetRef.current : edit.offset ?? offsetRef.current
+      const pending = findTrigger(valueRef.current, cursor)
+      if (pending && /^(?:[/@$]|\$all:|@(?:file|session|agent|connector|plugin):)$/iu.test(pending.trigger + pending.query)) {
+        offsetRef.current = cursor
+        setOffset(cursor)
+        return
+      }
+    }
     if (edit.offset !== undefined) { offsetRef.current = edit.offset; setOffset(edit.offset) }
-    if (edit.submit !== undefined) onSubmit(edit.submit)
+    if (edit.submit !== undefined) submit(edit.submit)
   }, { isActive: focus })
 
   // Render the value with an inverted cursor block.
@@ -240,9 +266,9 @@ export function CliTextInput({
         <Text inverse>{at}</Text>
         <Text>{after}</Text>
       </Box>
-      {active?.error === undefined ? null : <Text color="yellow">{active.error}</Text>}
-      {active?.items.slice(first, first + 7).map(item => (
-        <Text key={item.kind + ':' + item.id} dimColor={item.disabled === true} inverse={picked === item}>
+      {hint === undefined ? null : <Text wrap="truncate-end" dimColor>{hint}</Text>}
+      {visible.map(item => (
+        <Text key={item.kind + ':' + item.id} wrap="truncate-end" dimColor={item.disabled === true} inverse={picked === item}>
           {picked === item ? '› ' : '  '}{item.label}{item.detail ? ' · ' + item.detail : ''}
         </Text>
       ))}

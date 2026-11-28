@@ -9,6 +9,9 @@
   ],
   "references": [
     {
+      "path": "../../packages/util/atomic-write"
+    },
+    {
       "path": "../../vendor/cordis"
     },
     {

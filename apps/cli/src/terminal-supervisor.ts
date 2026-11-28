@@ -163,7 +163,9 @@ export async function ensureTerminalHost(options: OpenTerminalHostOptions): Prom
   while (!signal.aborted) {
     const state = await readTerminalHostState(paths.state)
     if (state !== undefined) {
-      if (!processExists(state.supervisorPid)) throw new Error('Stale terminal Host state. Inspect dsh host status.')
+      if (!processExists(state.supervisorPid)) {
+        throw new Error('Stale terminal Host state. Run dsh host status, then dsh host recover if both recorded processes exited.')
+      }
       if (state.runtime !== runtime || JSON.stringify(state.patches) !== JSON.stringify(patches)) {
         throw new Error('The running terminal Host uses a different runtime or patch set. Use dsh host stop before restarting it.')
       }
@@ -175,7 +177,7 @@ export async function ensureTerminalHost(options: OpenTerminalHostOptions): Prom
         }
         return connectTerminalHost({ ...options, env }, new URL(launchUrl))
       }
-    } else if (!await exists(paths.lease)) {
+    } else if (!await exists(paths.lease) && !await exists(paths.recovery)) {
       if (launchExited) throw new Error('The terminal Host supervisor exited during startup.')
       if (!launched) {
         const helper = fileURLToPath(new URL('./terminal-supervisor-main.js', import.meta.url))
@@ -195,15 +197,37 @@ export async function ensureTerminalHost(options: OpenTerminalHostOptions): Prom
   throw new Error('Timed out waiting for the terminal Host supervisor')
 }
 
-/** Print safe supervisor status or send an authenticated stop request for this exact generation.
- * @param action - local status or stop command.
+async function recoverTerminalHost(paths: ReturnType<typeof terminalHostPaths>): Promise<void> {
+  await prepareTerminalHostDirectory(paths.directory)
+  const lock = await open(paths.recovery, 'wx', 0o600)
+  try {
+    const state = await readTerminalHostState(paths.state)
+    if (state === undefined && !await exists(paths.lease)) {
+      console.log(JSON.stringify({ status: 'stopped' }))
+      return
+    }
+    if (state?.phase !== 'ready' || processExists(state.supervisorPid) || processExists(state.pid)) {
+      throw new Error('Recovery requires a recorded Host generation with both processes exited. Inspect dsh host status.')
+    }
+    await rm(paths.state, { force: true })
+    await rm(paths.lease, { force: true })
+    console.log(JSON.stringify({ status: 'recovered', generation: state.generation }))
+  } finally {
+    await lock.close()
+    await rm(paths.recovery, { force: true })
+  }
+}
+
+/** Print status, recover dead launch state, or send an authenticated stop request.
+ * @param action - local Host lifecycle command.
  * @param confirmed - true only when the caller used --yes.
  * @param env - caller environment and profile selection.
  */
 export async function runTerminalHostCommand(
-  action: 'status' | 'stop', confirmed: boolean, env: NodeJS.ProcessEnv = process.env,
+  action: 'status' | 'stop' | 'recover', confirmed: boolean, env: NodeJS.ProcessEnv = process.env,
 ): Promise<void> {
   const paths = terminalHostPaths(env)
+  if (action === 'recover') return recoverTerminalHost(paths)
   const state = await readTerminalHostState(paths.state)
   if (state === undefined) {
     console.log(JSON.stringify({ status: await exists(paths.lease) ? 'waiting-for-state' : 'stopped' }))

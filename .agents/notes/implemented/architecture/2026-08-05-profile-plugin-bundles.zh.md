@@ -27,6 +27,8 @@ Status: implemented
 
 ## Consequences
 
+安装回退从依赖的实际目录继续遍历，pnpm 链接的组合包可解析自身依赖。CLI 安装包含内置配置档所需的工作区 peer 依赖。
+
 - 新的组合表层（TUI、提供方扩展包）以普通 npm 包形式交付，可按 profile 安装；仓库不再需要为每种部署形态各留一行。
 - `apps/cli` 收缩为 argv 解析、profile 机制的消费方和 pnpm 转发器；`AppCLIEntry` 与各表层专属的启动路径全部移除。
 - 无密钥 web e2e 脚手架以与生产相同的空根形态启动相同的组合包层，包括 profiles 模块回退，因此测试与产品之间的组合漂移会响亮失败。

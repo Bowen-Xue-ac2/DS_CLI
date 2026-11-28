@@ -11,6 +11,7 @@ export interface TerminalActivityItem {
   readonly step: number
   readonly state: 'running' | 'succeeded' | 'failed' | 'cancelled'
   readonly arguments?: string
+  readonly summary?: string
   readonly output?: string
   readonly startedAt?: number
   readonly durationMs?: number
@@ -37,6 +38,18 @@ function resultText(value: unknown): string {
   }).filter(Boolean).join('\n'))
 }
 
+function toolSummary(value: string): string | undefined {
+  try {
+    const { description } = object(JSON.parse(value))
+    if (typeof description !== 'string') return undefined
+    const summary = boundedText(description).replace(/\s+/gu, ' ').trim()
+    if (summary.length === 0) return undefined
+    return summary.length > 120 ? summary.slice(0, 119) + '…' : summary
+  } catch {
+    return undefined
+  }
+}
+
 /**
  * Apply one committed frame to the projected tool calls in its own Session.
  * @param calls - invocation index owned by the current replay.
@@ -56,9 +69,11 @@ export function applyTerminalActivity(
   let item: TerminalActivityItem
   if (event.type === 'tool/call') {
     if (earlier !== undefined || typeof data.name !== 'string') return undefined
+    const summary = typeof data.arguments === 'string' ? toolSummary(data.arguments) : undefined
     item = {
       key, callId, turn: data.turn, step: data.step, name: data.name, state: 'running',
       ...(typeof data.arguments === 'string' ? { arguments: boundedText(data.arguments) } : {}),
+      ...(summary === undefined ? {} : { summary }),
       ...(event.time === undefined ? {} : { startedAt: event.time }),
     }
   } else {

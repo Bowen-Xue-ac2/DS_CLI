@@ -15,6 +15,7 @@ export type CliViewItem =
     name: string
     callId: string
     state: 'running' | 'done' | 'error' | 'cancelled'
+    summary?: string
     error?: string
     durationMs?: number
     output?: string

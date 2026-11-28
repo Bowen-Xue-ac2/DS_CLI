@@ -8,10 +8,11 @@
  */
 
 import { randomUUID } from 'node:crypto'
+import { realpath } from 'node:fs/promises'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { installModelSelection } from '@deepseek-ai/dsh-agent'
-import type { ModelSelectionRef } from '@deepseek-ai/dsh-agent'
+import type { AgentSetup, ModelSelectionRef } from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
@@ -31,10 +32,16 @@ export const inject = ['agentDefaultModel', 'agents', 'sessions']
 export interface Config {
   /** The prompt text for the single run. */
   task: string
+  /** Resume a saved headless Session in its original working directory. */
+  sessionId?: string
+  /** Emit committed events as JSON Lines. */
+  json?: boolean
 }
 
 export const Config: z<Config> = z.object({
   task: z.string().required(),
+  sessionId: z.string(),
+  json: z.boolean(),
 })
 
 /** Outcome of one owned run interval. */
@@ -88,12 +95,12 @@ function fail(io: HeadlessIo, error: unknown): void {
 }
 
 /**
- * Run one task through a freshly created Agent and request process exit.
+ * Run one task on a fresh or restored Agent and request process exit.
  * @param ctx - plugin context carrying the Agent, default model, Session, and launcher IO services.
- * @param task - one-shot task text.
+ * @param config - task, optional saved Session and output mode.
  * @param io - process-facing effects.
  */
-async function run(ctx: Context, task: string, io: HeadlessIo): Promise<void> {
+async function run(ctx: Context, config: Config, io: HeadlessIo): Promise<void> {
   // Loader siblings mount concurrently. Await the complete application before
   // creating an Agent so its scoped tools and adapters are not half-composed.
   await ctx.get('loader')?.await()
@@ -108,25 +115,53 @@ async function run(ctx: Context, task: string, io: HeadlessIo): Promise<void> {
   // host plane and the agent reads them from the global layer. A deployment
   // that DOES configure one has to join it here first
   // (@deepseek-ai/dsh-agent-presets README, "Composing a child agent").
-  const { agent } = await agents.create({
-    sessionId: SessionId(`session-${randomUUID()}`),
-    meta: { cwd: process.cwd() },
-    agentOptions: { provider: selection.provider, model: selection.model },
-    setup: (agentCtx) => {
-      const selected: ModelSelectionRef = { current: selection, assembled: undefined }
-      installModelSelection(agentCtx, selected)
-    },
-  })
+  const cwd = await realpath(process.cwd())
+  const requestedId = config.sessionId
+  if (requestedId !== undefined && !/^session-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/u.test(requestedId)) {
+    throw new Error('Invalid headless session ID. Use the sessionId from a previous run.')
+  }
+  const setup: AgentSetup = async (agentCtx) => {
+    if (requestedId !== undefined) {
+      const header = agentCtx.agent?.session.header
+      if (header?.cwd === undefined || header.parentSession !== undefined || await realpath(header.cwd) !== cwd) {
+        throw new Error('Run headless resume from the original session directory.')
+      }
+    }
+    const selected: ModelSelectionRef = { current: selection, assembled: undefined }
+    installModelSelection(agentCtx, selected)
+  }
+  const agentOptions = { provider: selection.provider, model: selection.model }
+  const { agent } = requestedId === undefined
+    ? await agents.create({ sessionId: SessionId(`session-${randomUUID()}`), meta: { cwd }, agentOptions, setup })
+    : await agents.resume({ resumeSessionId: SessionId(requestedId), agentOptions, setup })
   await agent.whenIdle()
   const firstSeq = agent.session.seq
-  agent.followup(createUserMessage({
-    content: [{ type: 'text', text: task }],
-    source: { kind: 'user' },
-  }))
-  await agent.whenIdle()
-  await sessions.flush(agent.session)
-  const outcome = summarize(agent.session.events, firstSeq)
-  io.stdout.write(outcome.text + '\n')
+  const write = (event: object): void => { io.stdout.write(JSON.stringify(event) + '\n') }
+  if (config.json === true) write({ type: 'session', sessionId: agent.id, cwd })
+  const unsubscribe = config.json === true ? ctx.on('session/event', (session, event) => {
+    if (session !== agent.session || event.seq < firstSeq) return
+    if (event.type === 'turn/start' || event.type === 'turn/end') {
+      write({ type: 'status', phase: event.type === 'turn/start' ? 'turn_start' : 'turn_end', ...event.data })
+    } else if (event.type === 'assistant/message') {
+      for (const block of event.data.message.content) {
+        if (block.type === 'text') write({ type: 'text', text: block.text })
+      }
+    }
+  }) : undefined
+  let outcome: RunOutcome
+  try {
+    agent.followup(createUserMessage({
+      content: [{ type: 'text', text: config.task }],
+      source: { kind: 'user' },
+    }))
+    await agent.whenIdle()
+    await sessions.flush(agent.session)
+    outcome = summarize(agent.session.events, firstSeq)
+  } finally {
+    unsubscribe?.()
+  }
+  if (config.json === true) write({ type: 'final', sessionId: agent.id, reason: outcome.reason ?? null, text: outcome.text })
+  else io.stdout.write(outcome.text + '\n')
   if (outcome.reason?.kind === 'error') {
     io.stderr.write(`dsh: ${outcome.reason.error.code}: ${outcome.reason.error.message}\n`)
   }
@@ -146,5 +181,5 @@ export function apply(ctx: Context, config: Config): void {
     throw new Error('headless-runner: the launcher must provide ctx.appExit before the tree mounts')
   }
   const io: HeadlessIo = { stdout: internals.stdout, stderr: internals.stderr, exit }
-  void run(ctx, config.task, io).catch((error: unknown) => { fail(io, error) })
+  void run(ctx, config, io).catch((error: unknown) => { fail(io, error) })
 }
